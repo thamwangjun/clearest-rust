@@ -1389,12 +1389,9 @@ async fn run_interactive(
     app.refresh_context_window_size();
     app.auto_compact_enabled = live_config.auto_compact;
 
-    // Background: refresh the model registry from models.dev.
-    // The fetched JSON is saved as a cache file; the App will reload it from
-    // disk whenever the /model picker opens.
-    {
-        spawn_models_cache_refresh();
-    }
+    // Note: spawn_models_cache_refresh() is already called inside
+    // refresh_provider_runtime_state; a second call here is redundant and
+    // would double the outbound HTTP requests and cache writes.
 
     app.config.project_dir = Some(tool_ctx.working_dir.clone());
     app.attach_turn_diff_state(tool_ctx.file_history.clone(), tool_ctx.current_turn.clone());
