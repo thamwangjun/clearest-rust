@@ -1352,8 +1352,9 @@ fn render_welcome_box(frame: &mut Frame, app: &App, area: Rect) {
         .unwrap_or_else(|| ".".to_string());
 
     // --- Box dimensions ---
-    // The box should be at most the full area width, and a fixed height.
-    let box_width = area.width.min(area.width);
+    // Cap the welcome box at 120 columns on very wide terminals; use the full
+    // area width on narrower ones.
+    let box_width = area.width.min(120);
     let box_height: u16 = WELCOME_BOX_HEIGHT;
     if area.height < box_height || box_width < 30 {
         // Too small: fall back to a single line
