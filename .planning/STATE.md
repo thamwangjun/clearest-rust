@@ -76,6 +76,7 @@ Plan: 1 of 1
 | 260505-nrr | commit all workspace changes | 2026-05-05 | ac514c5 | [260505-nrr-commit-all-workspace-changes](.planning/quick/260505-nrr-commit-all-workspace-changes/) |
 | 260505-oik | Update STATE.md and PROJECT.md — remove src-rust/ references | 2026-05-05 | 6c32ec1 | [260505-oik-update-state-md-and-project-md-to-remove](./quick/260505-oik-update-state-md-and-project-md-to-remove/) |
 | 260505-osq | update phase 02 PLAN.md artifacts to reflect major refactor | 2026-05-05 | 0bb5d94 | [260505-osq-update-phase-02-plan-md-artifacts-to-ref](./quick/260505-osq-update-phase-02-plan-md-artifacts-to-ref/) |
+| 260505-ovd | update all current milestone artifacts to reflect the major refactor | 2026-05-05 | — | [260505-ovd-update-all-current-milestone-artifacts-t](./quick/260505-ovd-update-all-current-milestone-artifacts-t/) |
 
 ## Session Continuity
 

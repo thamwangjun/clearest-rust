@@ -40,7 +40,7 @@ created: 2026-05-05
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
 | 2-01-01 | 01 | 1 | D-01, D-02, D-03 | T-02-01 | collapsed branch calls no reasoning_heading | unit | `cargo test -p claurst-tui thinking_block_collapsed thinking_block_expanded` | ✅ (existing + updated) | ⬜ pending |
 | 2-02-01 | 02 | 1 | D-07 | — | N/A | unit | `cargo test -p claurst-tui show_starts_at_welcome_page` | ❌ W0 (created by this task) | ⬜ pending |
-| 2-02-02 | 02 | 1 | D-04 | T-02-04 | credential check unmodified | build + unit | `cargo test -p claurst-tui && cargo build -p claurst-cli` | ✅ | ⬜ pending |
+| 2-02-02 | 02 | 1 | D-04 | T-02-04 | credential check unmodified | build + unit | `cargo test -p claurst-tui && cargo build -p claurst` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 

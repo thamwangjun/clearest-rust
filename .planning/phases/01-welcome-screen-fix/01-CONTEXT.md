@@ -41,15 +41,15 @@ Fix the first-launch welcome/onboarding dialog so that pressing Enter advances t
 **Downstream agents MUST read these before planning or implementing.**
 
 ### Onboarding Dialog
-- `src-rust/crates/tui/src/onboarding_dialog.rs` — dialog state machine (`OnboardingDialogState`, `OnboardingPage`, `next_page()`, `dismiss()`), render functions for each page, existing unit tests
+- `crates/tui/src/onboarding_dialog.rs` — dialog state machine (`OnboardingDialogState`, `OnboardingPage`, `next_page()`, `dismiss()`), render functions for each page, existing unit tests
 
 ### App Key Event Handling
-- `src-rust/crates/tui/src/app.rs` — `handle_key_event()` (line ~2718), onboarding handler (lines ~2768–2786), `bypass_permissions_dialog` handler (lines ~2742–2766), quit paths (`should_quit = true` at lines ~1973, 3670, 4245, 5502)
-- `src-rust/crates/tui/src/app.rs` — `should_quit` field (line ~659)
+- `crates/tui/src/app.rs` — `handle_key_event()` (line ~2718), onboarding handler (lines ~2768–2786), `bypass_permissions_dialog` handler (lines ~2742–2766), quit paths (`should_quit = true` at lines ~1973, 3670, 4245, 5502)
+- `crates/tui/src/app.rs` — `should_quit` field (line ~659)
 
 ### Main Event Loop
-- `src-rust/crates/cli/src/main.rs` — `'main: loop` (line ~1621), `any_dialog_open` guard (lines ~1675–1705) that includes `app.onboarding_dialog.visible`, `handle_key_event` call (line ~2272), `should_quit` check (line ~3143)
-- `src-rust/crates/cli/src/main.rs` — onboarding show logic (lines ~1430–1443)
+- `crates/cli/src/main.rs` — `'main: loop` (line ~1621), `any_dialog_open` guard (lines ~1675–1705) that includes `app.onboarding_dialog.visible`, `handle_key_event` call (line ~2272), `should_quit` check (line ~3143)
+- `crates/cli/src/main.rs` — onboarding show logic (lines ~1430–1443)
 
 ### Requirements
 - `.planning/REQUIREMENTS.md` — BUG-01 definition

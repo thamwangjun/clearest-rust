@@ -6,15 +6,15 @@ tags: ["bug-fix", "tdd", "onboarding", "regression-tests"]
 dependency_graph:
   requires: []
   provides: ["BUG-01 regression guard", "onboarding_defaults_hidden fix"]
-  affects: ["src-rust/crates/tui/src/onboarding_dialog.rs", "src-rust/crates/tui/src/app.rs"]
+  affects: ["crates/tui/src/onboarding_dialog.rs", "crates/tui/src/app.rs"]
 tech_stack:
   added: []
   patterns: ["TDD RED/GREEN", "unit test assertions", "ratatui test backend"]
 key_files:
   created: []
   modified:
-    - src-rust/crates/tui/src/onboarding_dialog.rs
-    - src-rust/crates/tui/src/app.rs
+    - crates/tui/src/onboarding_dialog.rs
+    - crates/tui/src/app.rs
 decisions:
   - "D-01: show() call preserved as welcome page entry point"
   - "D-02: Page order Welcome -> KeyBindings -> Done unchanged"
@@ -37,7 +37,7 @@ metrics:
 
 ### Task 1: Fix onboarding_defaults_hidden (dc691f8)
 
-**File:** `src-rust/crates/tui/src/onboarding_dialog.rs`
+**File:** `crates/tui/src/onboarding_dialog.rs`
 **Line:** 390
 
 The test `onboarding_defaults_hidden` was asserting `OnboardingPage::Welcome` on a freshly constructed `OnboardingDialogState::new()`. This was wrong because:
@@ -51,7 +51,7 @@ No other lines were touched. The `assert!(!state.visible)` on the preceding line
 
 ### Task 2: Add D-06 Regression Tests (f7cced5)
 
-**File:** `src-rust/crates/tui/src/app.rs`
+**File:** `crates/tui/src/app.rs`
 **Lines added:** 5919-5963 (three test functions + import)
 
 **Import added** at line 5604 (inside `mod tests`):
@@ -119,7 +119,7 @@ No production code modifications were needed.
 - **Found during:** Task 2 compilation
 - **Issue:** Plan stated `OnboardingPage` would be in scope via `use super::*`. However, `OnboardingPage` is defined in `crate::onboarding_dialog` and not re-exported from `app.rs`'s module root, so `super::*` does not bring it into the test module's scope.
 - **Fix:** Added `use crate::onboarding_dialog::OnboardingPage;` as the second import in `mod tests`
-- **Files modified:** `src-rust/crates/tui/src/app.rs` (line 5604)
+- **Files modified:** `crates/tui/src/app.rs` (line 5604)
 - **Commit:** f7cced5 (included in Task 2 commit)
 
 ## Known Stubs
@@ -137,8 +137,8 @@ None — this plan adds test-only code. No new network endpoints, auth paths, fi
 ## Self-Check: PASSED
 
 Files modified:
-- `src-rust/crates/tui/src/onboarding_dialog.rs` — FOUND
-- `src-rust/crates/tui/src/app.rs` — FOUND
+- `crates/tui/src/onboarding_dialog.rs` — FOUND
+- `crates/tui/src/app.rs` — FOUND
 - `.planning/phases/01-welcome-screen-fix/01-01-SUMMARY.md` — FOUND
 
 Commits:

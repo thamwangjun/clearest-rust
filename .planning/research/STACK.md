@@ -361,7 +361,7 @@ message pane, but it requires opt-in via a crate feature flag.
 
 ## Sources
 
-- Codebase: `/Users/thamw/development/local/claurst/src-rust/crates/` (directly read)
+- Codebase: `/Users/thamw/development/local/clearest-rust/crates/` (directly read)
 - [eventsource-stream on crates.io](https://crates.io/crates/eventsource-stream) — v0.2.3
 - [reqwest-eventsource on crates.io](https://crates.io/crates/reqwest-eventsource) — v0.6.0
 - [landlock on crates.io](https://crates.io/crates/landlock/0.4.1) — v0.4.4

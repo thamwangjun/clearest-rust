@@ -44,18 +44,18 @@ Fix two pre-existing bugs surfaced by Phase 1 UAT. No new features. Scope is exa
 **Downstream agents MUST read these before planning or implementing.**
 
 ### Collapsed thinking render
-- `src-rust/crates/tui/src/messages/mod.rs` §`render_thinking_block` (line ~1245) — current implementation that calls `reasoning_heading` unconditionally; this is what needs fixing
-- `src-rust/crates/tui/src/transcript_turn.rs` §`reasoning_heading` — function that leaks content text; do NOT modify it, just stop calling it in collapsed mode
-- `src-rust/crates/tui/tests/render_snapshots.rs` §`thinking_block_collapsed` (line 159) — failing test that must pass after the fix
-- `src-rust/crates/tui/src/messages/mod.rs` §`RenderContext` (line 30) — struct to add `frame_count: u64` field to
+- `crates/tui/src/messages/mod.rs` §`render_thinking_block` (line ~1245) — current implementation that calls `reasoning_heading` unconditionally; this is what needs fixing
+- `crates/tui/src/transcript_turn.rs` §`reasoning_heading` — function that leaks content text; do NOT modify it, just stop calling it in collapsed mode
+- `crates/tui/tests/render_snapshots.rs` §`thinking_block_collapsed` (line 159) — failing test that must pass after the fix
+- `crates/tui/src/messages/mod.rs` §`RenderContext` (line 30) — struct to add `frame_count: u64` field to
 
 ### Frame count threading
-- `src-rust/crates/tui/src/render.rs` §`render_live_thinking_lines` (line ~1072) — reference for how `shimmer_spans` uses `frame_count`; follow the same pattern
-- `src-rust/crates/tui/src/render.rs` — two `RenderContext { ... }` construction sites (lines ~1115 and ~1271) that must include `frame_count: app.frame_count`
+- `crates/tui/src/render.rs` §`render_live_thinking_lines` (line ~1072) — reference for how `shimmer_spans` uses `frame_count`; follow the same pattern
+- `crates/tui/src/render.rs` — two `RenderContext { ... }` construction sites (lines ~1115 and ~1271) that must include `frame_count: app.frame_count`
 
 ### Welcome routing
-- `src-rust/crates/cli/src/main.rs` lines 1430–1443 — startup routing block; line 1435 is the bug (`show_provider_setup()` → `show()`)
-- `src-rust/crates/tui/src/onboarding_dialog.rs` — `show()` vs `show_provider_setup()` implementations; confirms `show()` starts at the Welcome page
+- `crates/cli/src/main.rs` lines 1430–1443 — startup routing block; line 1435 is the bug (`show_provider_setup()` → `show()`)
+- `crates/tui/src/onboarding_dialog.rs` — `show()` vs `show_provider_setup()` implementations; confirms `show()` starts at the Welcome page
 
 ### Phase 1 decisions (locked)
 - `.planning/phases/01-welcome-screen-fix/01-CONTEXT.md` — D-01 through D-06; especially D-01 (show() is correct entry) and D-06 (regression test requirements)

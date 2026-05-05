@@ -386,7 +386,7 @@ Issues that are annoying but bounded in impact.
 
 ## Sources
 
-- Codebase audit: `/Users/thamw/development/local/claurst/src-rust/.planning/codebase/CONCERNS.md` (2026-05-04) — HIGH confidence
+- Codebase audit: `.planning/codebase/CONCERNS.md` (2026-05-04) — HIGH confidence
 - [EscapeRoute: CVE-2025-53109 & CVE-2025-53110 — Anthropic MCP Filesystem Sandbox Escape](https://cymulate.com/blog/cve-2025-53109-53110-escaperoute-anthropic/) — HIGH confidence
 - [MCP STDIO transport command execution: 200,000 servers exposed](https://venturebeat.com/security/mcp-stdio-flaw-200000-ai-agent-servers-exposed-ox-security-audit) — HIGH confidence
 - [A Timeline of MCP Security Breaches](https://authzed.com/blog/timeline-mcp-breaches) — MEDIUM confidence

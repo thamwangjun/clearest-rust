@@ -4,8 +4,8 @@ reviewed: 2026-05-05T00:00:00Z
 depth: standard
 files_reviewed: 2
 files_reviewed_list:
-  - src-rust/crates/tui/src/onboarding_dialog.rs
-  - src-rust/crates/tui/src/app.rs
+  - crates/tui/src/onboarding_dialog.rs
+  - crates/tui/src/app.rs
 findings:
   critical: 1
   warning: 3
@@ -33,7 +33,7 @@ One critical bug was found: pressing **Esc** to dismiss the onboarding dialog do
 
 ### CR-01: Esc dismissal does not persist `has_completed_onboarding`
 
-**File:** `src-rust/crates/tui/src/app.rs:2771-2772`
+**File:** `crates/tui/src/app.rs:2771-2772`
 
 **Issue:** When the user presses Esc to dismiss the onboarding dialog, `dismiss()` is called but `persist_onboarding_complete()` is not. On the next launch `main.rs:1434` re-evaluates `!settings.has_completed_onboarding`, finds it still `false`, and calls `app.onboarding_dialog.show()` again. The dialog re-appears on every launch until the user navigates all the way to the `Done` page via Enter. This is the root cause of the "onboarding silent exit" bug (BUG-01).
 
@@ -62,7 +62,7 @@ The same fix applies to the `ProviderSetup` page Esc path — the comment on lin
 
 ### WR-01: `show_provider_setup()` is dead code — `ProviderSetup` page is unreachable at runtime
 
-**File:** `src-rust/crates/tui/src/onboarding_dialog.rs:53-56`
+**File:** `crates/tui/src/onboarding_dialog.rs:53-56`
 
 **Issue:** `show_provider_setup()` is the only way to set `page = OnboardingPage::ProviderSetup`. A codebase-wide search confirms it is never called: `main.rs:1433-1435` always calls `app.onboarding_dialog.show()` (which sets `page = Welcome`), even in the no-credentials branch. As a result:
 
@@ -90,7 +90,7 @@ Or, if `ProviderSetup` has been intentionally replaced by the Welcome flow, dele
 
 ### WR-02: Blocking filesystem I/O called from the async tokio event loop
 
-**File:** `src-rust/crates/tui/src/app.rs:2704-2707`
+**File:** `crates/tui/src/app.rs:2704-2707`
 
 **Issue:** `persist_onboarding_complete()` calls `Settings::load_sync()` (which does `std::fs::read_to_string`) and `settings.save_sync()` (which does `std::fs::write`) directly. `handle_key_event` is invoked from the tokio main-thread event loop (`main.rs:1648` and `2272`), which runs inside `#[tokio::main]`. Blocking the tokio thread during a key event stalls all other async tasks (streaming responses, MCP communication, status polling) until the disk I/O completes.
 
@@ -116,7 +116,7 @@ Apply the same pattern to the Esc branch once CR-01 is fixed.
 
 ### WR-03: Duplicate footer content rendered in `render_provider_setup_page`
 
-**File:** `src-rust/crates/tui/src/onboarding_dialog.rs:199-218`
+**File:** `crates/tui/src/onboarding_dialog.rs:199-218`
 
 **Issue:** The `lines` vector in `render_provider_setup_page` contains two independent "20+ more providers" lines and two independent "Esc: dismiss" lines:
 
@@ -133,7 +133,7 @@ Both sets are always rendered, so the user sees the same information twice. When
 
 ### IN-01: Left-arrow on `Welcome` page is a silent no-op with no visual feedback
 
-**File:** `src-rust/crates/tui/src/onboarding_dialog.rs:77`
+**File:** `crates/tui/src/onboarding_dialog.rs:77`
 
 **Issue:** `prev_page()` maps `Welcome => Welcome`, meaning Left arrow on the first page does nothing. The Welcome page footer shows `"enter next  ·  esc skip"` (no back arrow), which is correct — but the key handler in `app.rs:2781-2783` still calls `prev_page()` unconditionally on Left. If the ProviderSetup page is ever wired up (WR-01 fix), pressing Left from Welcome would need to navigate to ProviderSetup, not stay on Welcome. The current mapping would silently break backward navigation.
 
@@ -143,7 +143,7 @@ Both sets are always rendered, so the user sees the same information twice. When
 
 ### IN-02: `render_provider_setup_page` does not call `render_dark_overlay` / `render_dialog_bg`
 
-**File:** `src-rust/crates/tui/src/onboarding_dialog.rs:115-223`
+**File:** `crates/tui/src/onboarding_dialog.rs:115-223`
 
 **Issue:** `render_welcome_page` (line 233) and `render_keybindings_page` (line 304) both call `render_dark_overlay(frame, area)` and `render_dialog_bg(frame, area)` before drawing their content. `render_provider_setup_page` only relies on the `Clear` widget rendered by the outer `render_onboarding_dialog` function (line 105), skipping the overlay and panel background. If this page becomes reachable (WR-01 fix), it will render without the dark overlay and panel background, looking visually inconsistent with the other pages.
 

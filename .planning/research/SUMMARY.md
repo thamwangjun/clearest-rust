@@ -301,7 +301,7 @@ Phases with well-established patterns (skip research):
 ## Sources
 
 ### Primary (HIGH confidence)
-- `/Users/thamw/development/local/claurst/src-rust/crates/` — direct codebase inspection
+- `/Users/thamw/development/local/clearest-rust/crates/` — direct codebase inspection
 - `spec/13_rust_codebase.md` — authoritative Rust implementation inventory
 - `spec/02_commands.md` + `spec/03_tools.md` — TypeScript parity targets
 - `.planning/codebase/CONCERNS.md` — security and reliability audit (2026-05-04)

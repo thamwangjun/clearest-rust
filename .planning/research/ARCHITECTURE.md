@@ -150,7 +150,7 @@ Before connecting project-scoped MCP servers (currently done at line ~808 where 
 
 ## 5. Upstream Sync Workflow
 
-**The repo structure:** The planning docs and git history live in the parent `claurst/` repo; the Rust source lives in `claurst/src-rust/`. The upstream remote is `https://github.com/kuberwastaken/claurst.git`. Upstream commits touch `src-rust/` paths directly.
+**The repo structure:** The planning docs and git history live alongside the Rust source in the `clearest-rust/` repo root (no `src-rust/` subdirectory — workspace Cargo.toml is at the root). The upstream remote is `https://github.com/kuberwastaken/claurst.git`. Upstream commits touch `crates/` paths directly.
 
 **Conflict surface analysis:**
 
@@ -164,7 +164,7 @@ The files most likely to conflict with upstream changes are the same files that 
 
 1. **Split the monoliths before taking upstream** — the module split of `commands/src/lib.rs` (point 2 above) and extracting `core/src/lib.rs` into sub-modules (`config.rs`, `permissions.rs`, `session_storage.rs`, etc.) reduces conflict surface from one 8K-line file to many 300-500 line files. Upstream changes to individual commands will only conflict with that command's file.
 
-2. **Treat `src-rust/` as a subtree** — use `git subtree` or a dedicated merge branch rather than squash-merging. This preserves per-file history and makes conflict resolution per-commit rather than per-blob.
+2. **Use a dedicated merge branch** — use `git subtree` or a dedicated merge branch rather than squash-merging. This preserves per-file history and makes conflict resolution per-commit rather than per-blob.
 
 3. **Feature-branch staging pattern:**
    ```
