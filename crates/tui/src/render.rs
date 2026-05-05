@@ -115,7 +115,6 @@ fn is_modal_open(app: &App) -> bool {
         || app.bypass_permissions_dialog.visible
         || app.onboarding_dialog.visible
         || app.import_config_picker.visible
-        || app.import_config_dialog.visible
         || app.connect_dialog.visible
         || app.key_input_dialog.visible
         || app.custom_provider_dialog.visible
