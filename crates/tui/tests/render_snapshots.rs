@@ -162,6 +162,8 @@ fn thinking_block_collapsed() {
     let text = flatten(&lines);
     assert!(text.contains("Thinking"));
     assert!(!text.contains("hidden thoughts"));
+    // Verify no thinking content bleeds into global-search indexable text.
+    assert!(!text.contains("hidden"), "collapsed thinking must not leak to search text");
 }
 
 #[test]
