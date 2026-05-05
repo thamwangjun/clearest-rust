@@ -1464,6 +1464,12 @@ async fn run_interactive(
     // CLAUDE_STATUS_COMMAND: optional external command whose stdout replaces the
     // left-side status bar text. Polled every 500ms (debounced) in the main loop.
     // The command is run in a background task; results flow through a channel.
+    //
+    // SECURITY NOTE: `CLAUDE_STATUS_COMMAND` is passed verbatim to `sh -c` /
+    // `cmd /C`.  Shell metacharacters (`;`, `|`, `$(…)`, etc.) in the value
+    // will be interpreted by the shell.  This is intentional when the value is
+    // set by the user running the process, but if the value ever comes from an
+    // external or untrusted source it must be validated / escaped before use.
     let status_cmd_str = std::env::var("CLAUDE_STATUS_COMMAND").ok();
     let (status_cmd_tx, mut status_cmd_rx) = mpsc::channel::<String>(4);
     if let Some(ref cmd_str) = status_cmd_str {
