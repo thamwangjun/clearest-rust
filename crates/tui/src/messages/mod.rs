@@ -63,8 +63,7 @@ const MAX_USER_PROMPT_DISPLAY_CHARS: usize = 10_000;
 const TRUNCATE_USER_PROMPT_HEAD_CHARS: usize = 2_500;
 const TRUNCATE_USER_PROMPT_TAIL_CHARS: usize = 2_500;
 
-/// Claude orange: Rgb(215, 119, 87)
-const CLAUDE_ORANGE: Color = Color::Rgb(233, 30, 99);
+use crate::theme_colors::CLAUDE_ORANGE;
 const TRANSCRIPT_USER_BG: Color = Color::Rgb(23, 23, 31);
 const TRANSCRIPT_CHIP_BG: Color = Color::Rgb(31, 31, 41);
 const TRANSCRIPT_TEXT: Color = Color::Rgb(236, 236, 241);

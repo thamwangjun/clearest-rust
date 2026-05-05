@@ -69,7 +69,7 @@ const SPINNER: &[char] = &['\u{00b7}', '\u{2722}', '*', '\u{2736}', '\u{273b}', 
 #[cfg(not(target_os = "windows"))]
 const SPINNER: &[char] = &['\u{00b7}', '\u{2722}', '\u{2733}', '\u{2736}', '\u{273b}', '\u{273d}',
                             '\u{273d}', '\u{273b}', '\u{2736}', '\u{2733}', '\u{2722}', '\u{00b7}'];
-const CLAUDE_ORANGE: Color = Color::Rgb(233, 30, 99);
+use crate::theme_colors::CLAUDE_ORANGE;
 const WELCOME_BOX_HEIGHT: u16 = 12;
 
 fn spinner_char(frame_count: u64) -> char {
