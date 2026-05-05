@@ -77,10 +77,12 @@ Plan: 1 of 2
 | 260505-oik | Update STATE.md and PROJECT.md — remove src-rust/ references | 2026-05-05 | 6c32ec1 | [260505-oik-update-state-md-and-project-md-to-remove](./quick/260505-oik-update-state-md-and-project-md-to-remove/) |
 | 260505-osq | update phase 02 PLAN.md artifacts to reflect major refactor | 2026-05-05 | 0bb5d94 | [260505-osq-update-phase-02-plan-md-artifacts-to-ref](./quick/260505-osq-update-phase-02-plan-md-artifacts-to-ref/) |
 | 260505-ovd | update all current milestone artifacts to reflect the major refactor | 2026-05-05 | 70578df | [260505-ovd-update-all-current-milestone-artifacts-t](./quick/260505-ovd-update-all-current-milestone-artifacts-t/) |
+| 260505-qy6 | Investigate and fix IN-02 from the phase 02 code review: the bare_name vs full name question in McpToolWrapper call_tool | 2026-05-05 | 6000b4f | [260505-qy6-investigate-and-fix-in-02-from-the-phase](./quick/260505-qy6-investigate-and-fix-in-02-from-the-phase/) |
 
 ## Session Continuity
 
 **Last session:** 2026-05-05
+**Last activity:** 2026-05-05 - Completed quick task 260505-qy6: Investigate and fix IN-02 from the phase 02 code review
 **Next action:** `/gsd-execute-phase 02` — both plans are ready
 
 ---
