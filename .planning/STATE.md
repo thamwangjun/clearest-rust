@@ -53,7 +53,7 @@ Plan: 1 of 1
 
 ### Relevant Files
 
-- `src-rust/` — Rust workspace root (12 crates)
+- Rust workspace root: repo root (Cargo.toml at `/`) — 12 crates
 - `.planning/codebase/` — architecture, stack, conventions, concerns, integrations, testing docs
 - `spec/INDEX.md` — navigation index for Claude Code feature specs
 
