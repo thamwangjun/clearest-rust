@@ -1336,12 +1336,14 @@ fn truncate_user_prompt_text(text: &str) -> String {
     let head = &text[..TRUNCATE_USER_PROMPT_HEAD_CHARS.min(text.len())];
     let tail_start = text.len().saturating_sub(TRUNCATE_USER_PROMPT_TAIL_CHARS);
     let tail = &text[tail_start..];
-    let hidden_lines = text
+    let head_newlines = text
         .chars()
         .take(TRUNCATE_USER_PROMPT_HEAD_CHARS)
         .filter(|c| *c == '\n')
-        .count()
-        .saturating_sub(tail.chars().filter(|c| *c == '\n').count());
+        .count();
+    let tail_newlines = tail.chars().filter(|c| *c == '\n').count();
+    let total_newlines = text.chars().filter(|c| *c == '\n').count();
+    let hidden_lines = total_newlines.saturating_sub(head_newlines + tail_newlines);
 
     format!("{head}\n… +{hidden_lines} lines …\n{tail}")
 }
