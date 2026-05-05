@@ -29,6 +29,11 @@ A reliable, feature-complete Rust alternative to Claude Code that stays current 
 
 - [ ] Fix welcome screen silent exit: pressing Enter on first-launch welcome page exits claurst silently with no error output
 
+### Validated in Phase 02
+
+- ✓ Collapsed thinking block shows animated dots, not leaked content text (frame_count-driven dot animation)
+- ✓ First-run no-credentials users land on Welcome page, not ProviderSetup (show() routing fix)
+
 ### Out of Scope
 
 - TypeScript / Node.js implementation — this is Rust-only
