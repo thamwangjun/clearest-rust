@@ -418,11 +418,21 @@ async fn main() -> anyhow::Result<()> {
                         eprintln!("Usage: {}", named_cmd.usage());
                         std::process::exit(1);
                     }
+                    claurst_commands::CommandResult::Silent => {
+                        // Intentionally no output; continue to normal startup below.
+                    }
                     _ => {
-                        // For any other result variant, fall through to normal startup
+                        // Any other named-command result variant (ConfigChange, Exit, etc.)
+                        // cannot be meaningfully handled in a pre-session context.
+                        // Warn and exit cleanly rather than silently returning Ok(()).
+                        eprintln!(
+                            "warning: named command '{}' returned an unsupported result in \
+                             non-interactive mode; exiting.",
+                            named_cmd.name()
+                        );
+                        std::process::exit(0);
                     }
                 }
-                return Ok(());
             }
         }
     }
