@@ -33,8 +33,8 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Fix thinking block collapsed content leak: add frame_count to RenderContext, animated dots in collapsed branch, update render.rs construction sites and render_snapshots.rs tests
-- [ ] 02-02-PLAN.md — Fix startup routing (show_provider_setup → show) and add startup_routing.rs regression test
+- [x] 02-01-PLAN.md — Fix thinking block collapsed content leak: add frame_count to RenderContext, animated dots in collapsed branch, update render.rs construction sites and render_snapshots.rs tests
+- [x] 02-02-PLAN.md — Fix startup routing (show_provider_setup → show) and add startup_routing.rs regression test
 
 ## Progress Table
 
