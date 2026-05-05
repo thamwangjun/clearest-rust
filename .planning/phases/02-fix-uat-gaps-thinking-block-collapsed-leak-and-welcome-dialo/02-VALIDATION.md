@@ -1,10 +1,11 @@
 ---
 phase: 2
 slug: fix-uat-gaps-thinking-block-collapsed-leak-and-welcome-dialo
-status: draft
+status: verified
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-05-05
+audited: 2026-05-05
 ---
 
 # Phase 2 — Validation Strategy
@@ -38,9 +39,9 @@ created: 2026-05-05
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 2-01-01 | 01 | 1 | D-01, D-02, D-03 | T-02-01 | collapsed branch calls no reasoning_heading | unit | `cargo test -p claurst-tui thinking_block_collapsed thinking_block_expanded` | ✅ (existing + updated) | ⬜ pending |
-| 2-02-01 | 02 | 1 | D-07 | — | N/A | unit | `cargo test -p claurst-tui show_starts_at_welcome_page` | ❌ W0 (created by this task) | ⬜ pending |
-| 2-02-02 | 02 | 1 | D-04 | T-02-04 | credential check unmodified | build + unit | `cargo test -p claurst-tui && cargo build -p claurst` | ✅ | ⬜ pending |
+| 2-01-01 | 01 | 1 | D-01, D-02, D-03 | T-02-01 | collapsed branch calls no reasoning_heading | unit | `cargo test -p claurst-tui thinking_block_collapsed thinking_block_expanded` | ✅ (existing + updated) | ✅ green |
+| 2-02-01 | 02 | 1 | D-07 | — | N/A | unit | `cargo test -p claurst-tui show_starts_at_welcome_page` | ✅ (created Wave 0) | ✅ green |
+| 2-02-02 | 02 | 1 | D-04 | T-02-04 | credential check unmodified | build + unit | `cargo test -p claurst-tui && cargo build -p claurst` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -77,4 +78,17 @@ created: 2026-05-05
 - [x] Feedback latency < 30s
 - [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending execution
+**Approval:** execution verified 2026-05-05
+
+---
+
+## Validation Audit 2026-05-05
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+| Tasks verified green | 3 |
+
+All tasks confirmed green post-execution. No new tests required — Wave 0 test (`startup_routing.rs`) was created during plan execution as designed. Full suite: 27 tests passed, 0 failed.
