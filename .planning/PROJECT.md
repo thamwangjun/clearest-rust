@@ -43,7 +43,7 @@ A reliable, feature-complete Rust alternative to Claude Code that stays current 
 
 ## Context
 
-- **Upstream:** `git remote upstream → https://github.com/kuberwastaken/claurst.git`. Merging upstream changes is part of ongoing maintenance. The parent repo (`claurst/`) holds the git history and `.planning/`; Rust source lives under `src-rust/`.
+- **Upstream:** `git remote upstream → https://github.com/kuberwastaken/claurst.git`. Merging upstream changes is part of ongoing maintenance. The parent repo (`claurst/`) holds the git history and `.planning/`; Rust source lives at the repo root (Cargo.toml at `/`).
 - **Spec reference:** `spec/` directory contains ~990 KB of Claude Code feature specs across 15 files (INDEX.md for navigation). This is the ground truth for parity work.
 - **Existing plan:** `plan.md` has a detailed Managed Agents implementation plan (manager-executor architecture, budget splitting, `/managed-agents` slash command).
 - **Open issues:** 20+ open GitHub issues; highest priority are security (#123), mouse/TUI (#104), Ollama (#86), and voice (#88).
