@@ -2483,9 +2483,7 @@ fn render_legacy_history_search(
                 .unwrap_or("");
 
             let truncated = if UnicodeWidthStr::width(entry) > (dialog_width as usize - 6) {
-                let mut s = entry.to_string();
-                s.truncate(dialog_width as usize - 9);
-                format!("{}\u{2026}", s)
+                truncate_end(entry, dialog_width as usize - 9)
             } else {
                 entry.to_string()
             };
