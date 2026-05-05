@@ -39,6 +39,8 @@ pub struct RenderContext {
     pub tool_names: HashMap<String, String>,
     /// Set of thinking block content hashes that are expanded per-block.
     pub expanded_thinking: std::collections::HashSet<u64>,
+    /// Current render frame counter for animations (e.g. dot cycling in collapsed thinking).
+    pub frame_count: u64,
 }
 
 impl Default for RenderContext {
@@ -49,6 +51,7 @@ impl Default for RenderContext {
             show_thinking: false,
             tool_names: HashMap::new(),
             expanded_thinking: std::collections::HashSet::new(),
+            frame_count: 0,
         }
     }
 }
@@ -1242,26 +1245,43 @@ pub fn render_system_message(text: &str) -> Vec<Line<'static>> {
 }
 
 /// Render a thinking block (collapsible - show header only when collapsed).
-pub fn render_thinking_block(text: &str, expanded: bool) -> Vec<Line<'static>> {
+/// In collapsed mode, shows animated dots instead of content to avoid leaking
+/// the thinking text. `frame_count` drives the dot animation (1–3 dots cycling
+/// every 4 frames, matching the shimmer_spans cadence in render.rs).
+pub fn render_thinking_block(text: &str, expanded: bool, frame_count: u64) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let heading = reasoning_heading(text).unwrap_or_else(|| "Thinking".to_string());
-    lines.push(Line::from(vec![
-        Span::styled(
-            "Thinking: ",
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
-        ),
-        Span::styled(
-            heading,
-            Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
-        ),
-    ]));
     if expanded {
+        let heading = reasoning_heading(text).unwrap_or_else(|| "Thinking".to_string());
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Thinking: ",
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            ),
+            Span::styled(
+                heading,
+                Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
+            ),
+        ]));
         for line in text.lines() {
             lines.push(Line::from(vec![
                 Span::styled("  ", Style::default()),
                 Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
             ]));
         }
+    } else {
+        // Collapsed: animated dots, no content derived from text (D-01)
+        let dot_count = ((frame_count / 4) % 3) + 1;
+        let dots = ".".repeat(dot_count as usize);
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Thinking: ",
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            ),
+            Span::styled(
+                dots,
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            ),
+        ]));
     }
     lines
 }
@@ -1453,7 +1473,7 @@ pub fn render_message(msg: &Message, ctx: &RenderContext) -> Vec<Line<'static>> 
                 };
                 let expanded = ctx.show_thinking || ctx.expanded_thinking.contains(&thinking_hash);
                 lines.extend(prefix_message_lines(
-                    render_thinking_block(&thinking, expanded),
+                    render_thinking_block(&thinking, expanded, ctx.frame_count),
                     &msg.role,
                     ctx.width,
                 ));

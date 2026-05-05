@@ -157,7 +157,7 @@ fn system_message_preserves_text() {
 
 #[test]
 fn thinking_block_collapsed() {
-    let lines = render_thinking_block("hidden thoughts", false);
+    let lines = render_thinking_block("hidden thoughts", false, 0);
     assert_eq!(lines.len(), 1);
     let text = flatten(&lines);
     assert!(text.contains("Thinking"));
@@ -166,7 +166,7 @@ fn thinking_block_collapsed() {
 
 #[test]
 fn thinking_block_expanded() {
-    let lines = render_thinking_block("my thoughts here", true);
+    let lines = render_thinking_block("my thoughts here", true, 0);
     assert!(lines.len() > 1);
     let combined = flatten(&lines);
     assert!(combined.contains("my thoughts here"));

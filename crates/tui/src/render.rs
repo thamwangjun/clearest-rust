@@ -1118,6 +1118,7 @@ fn append_turn_items(
                 show_thinking: false,
                 tool_names: tool_names.clone(),
                 expanded_thinking: expanded_thinking.clone(),
+                frame_count,
             },
         );
         if !tagged.is_empty() {
@@ -1274,6 +1275,7 @@ fn render_message_items(app: &App, width: u16) -> Vec<RenderedLineItem> {
                     show_thinking: false,
                     tool_names: tool_names.clone(),
                     expanded_thinking: app.thinking_expanded.clone(),
+                    frame_count: app.frame_count,
                 },
             );
             push_rendered_items_tagged(&mut items, tagged, Some(index));
