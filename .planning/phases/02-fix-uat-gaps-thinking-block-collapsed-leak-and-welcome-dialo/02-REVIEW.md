@@ -226,9 +226,13 @@ assert!(!text.contains("hidden"), "collapsed thinking must not leak to search te
 
 ### IN-02: `bare_name` is computed but unused in `McpToolWrapper::execute`
 
+**Resolution: not applicable**
+
 **File:** `crates/cli/src/main.rs:85-90,103`
 
 **Issue:** `bare_name` strips the server-name prefix from the tool name for use in the error message, but the `Err` branch at line 103 correctly uses `bare_name`. However at line 94, `call_tool` is passed `&self.tool_def.name` (the full prefixed name) rather than `bare_name`. If MCP server implementations expect the bare name in their dispatch, this will cause tool-not-found errors. Worth confirming the MCP server contract.
+
+**Resolution (not applicable):** `McpManager::call_tool` (`crates/mcp/src/lib.rs:1034`) accepts the full prefixed name and strips the server-name prefix internally before forwarding the bare name to `McpClient::call_tool`. Passing `&self.tool_def.name` (the prefixed name) at line 95 is therefore correct. The `bare_name` local variable is correctly scoped to the `Err` branch error message at line 104. No code change required.
 
 ---
 
