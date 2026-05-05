@@ -2614,6 +2614,27 @@ async fn run_interactive(
                         // Inject the remote prompt as if the user typed it, then
                         // trigger submission automatically.
                         app.set_prompt_text(content.clone());
+
+                        // Fire UserPromptSubmit hooks so remote prompts go through
+                        // the same hook pipeline as keyboard-submitted messages.
+                        if !config.hooks.is_empty() {
+                            let hook_ctx = claurst_core::hooks::HookContext {
+                                event: "UserPromptSubmit".to_string(),
+                                tool_name: None,
+                                tool_input: None,
+                                tool_output: Some(content.clone()),
+                                is_error: None,
+                                session_id: Some(tool_ctx.session_id.clone()),
+                            };
+                            claurst_core::hooks::run_hooks(
+                                &config.hooks,
+                                claurst_core::config::HookEvent::UserPromptSubmit,
+                                &hook_ctx,
+                                &tool_ctx.working_dir,
+                            )
+                            .await;
+                        }
+
                         // Push as a user message and fire a query immediately.
                         messages.push(claurst_core::types::Message::user(content.clone()));
                         app.push_message(claurst_core::types::Message::user(content.clone()));
