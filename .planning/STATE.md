@@ -53,7 +53,7 @@ Plan: 1 of 1
 
 ### Relevant Files
 
-- Rust workspace root: repo root (Cargo.toml at `/`) — 12 crates
+- `.` — Rust workspace root (12 crates, Cargo.toml at repo root)
 - `.planning/codebase/` — architecture, stack, conventions, concerns, integrations, testing docs
 - `spec/INDEX.md` — navigation index for Claude Code feature specs
 
@@ -74,10 +74,11 @@ Plan: 1 of 1
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260505-nrr | commit all workspace changes | 2026-05-05 | ac514c5 | [260505-nrr-commit-all-workspace-changes](.planning/quick/260505-nrr-commit-all-workspace-changes/) |
+| 260505-oik | Update STATE.md and PROJECT.md — remove src-rust/ references | 2026-05-05 | 6c32ec1 | [260505-oik-update-state-md-and-project-md-to-remove](./quick/260505-oik-update-state-md-and-project-md-to-remove/) |
 
 ## Session Continuity
 
-**Last session:** 2026-05-05T09:06:55.228Z
+**Last session:** 2026-05-05T09:39:00.000Z
 **Next action:** Run `/gsd-plan-phase 1` to break Phase 1 into executable plans
 
 ---
