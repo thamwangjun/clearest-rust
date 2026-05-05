@@ -2666,15 +2666,22 @@ async fn run_interactive(
                         }
                     }
                     Ok(TuiBridgeEvent::PermissionResponse { tool_use_id, response }) => {
-                        // Resolve a pending permission dialog if IDs match.
+                        use claurst_bridge::PermissionResponseKind;
+                        // Clear the UI dialog if IDs match.
                         if let Some(ref pr) = app.permission_request {
                             if pr.tool_use_id == tool_use_id {
-                                use claurst_bridge::PermissionResponseKind;
-                                let _allow = matches!(
-                                    response,
-                                    PermissionResponseKind::Allow | PermissionResponseKind::AllowSession
-                                );
                                 app.permission_request = None;
+                            }
+                        }
+                        // Forward the decision to the waiting tool task.
+                        if let Some(mut pending) = pending_permissions.lock().waiting.remove(&tool_use_id) {
+                            let decision = match response {
+                                PermissionResponseKind::Allow | PermissionResponseKind::AllowSession =>
+                                    claurst_core::permissions::PermissionDecision::Allow,
+                                _ => claurst_core::permissions::PermissionDecision::Deny,
+                            };
+                            if let Some(tx) = pending.decision_tx.take() {
+                                let _ = tx.send(decision);
                             }
                         }
                     }
