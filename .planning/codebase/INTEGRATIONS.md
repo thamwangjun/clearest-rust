@@ -1,219 +1,265 @@
-# Integrations
+# External Integrations
 
-**Analysis Date:** 2026-05-04
+**Analysis Date:** 2026-05-05
 
-## External APIs
+## LLM Provider APIs
 
-### LLM Providers
+Claurst integrates with a large number of LLM providers through two abstraction layers in `crates/api`:
 
-All providers are implemented in `crates/api/src/providers/` and registered via `crates/api/src/registry.rs`.
+1. **Native providers** — dedicated client implementations
+2. **OpenAI-compatible providers** — generic `OpenAiCompatProvider` wrapper
 
-**Anthropic (primary / default)**
-- Provider file: `crates/api/src/providers/anthropic.rs`
-- Auth env var: `ANTHROPIC_API_KEY`
-- Transformer: `crates/api/src/transformers/anthropic.rs`
+### Native Providers (`crates/api/src/providers/`)
 
-**OpenAI**
-- Provider file: `crates/api/src/providers/openai.rs`
-- Auth env var: `OPENAI_API_KEY`
-- Transformer: `crates/api/src/transformers/openai_chat.rs`
-- Custom base URL override supported
+**Anthropic Claude:**
+- File: `crates/api/src/providers/anthropic.rs`
+- Endpoint: `https://api.anthropic.com` (overrideable via `ANTHROPIC_BASE_URL`)
+- Auth: `ANTHROPIC_API_KEY` env var or `~/.claurst/auth.json` OAuth token
+- Transport: HTTPS with SSE streaming (`reqwest` stream)
+- Protocol: Anthropic Messages API (native format)
 
-**Google Gemini / Vertex AI**
-- Provider file: `crates/api/src/providers/google.rs`
-- Auth env vars: `GOOGLE_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`
-- Vertex AI: `ANTHROPIC_VERTEX_PROJECT_ID` or `CLOUD_ML_PROJECT_ID`
+**OpenAI:**
+- File: `crates/api/src/providers/openai.rs`
+- Endpoint: `https://api.openai.com` (overrideable via `OPENAI_BASE_URL`)
+- Auth: `OPENAI_API_KEY`
+- Transport: HTTPS with SSE streaming
 
-**AWS Bedrock**
-- Provider file: `crates/api/src/providers/bedrock.rs`
-- Auth env vars: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` (optional), `AWS_BEARER_TOKEN_BEDROCK` (token auth alternative)
-- Region env vars: `AWS_REGION` or `AWS_DEFAULT_REGION`
-- Model env var: `AWS_BEDROCK_MODEL_ID`
-- Uses HMAC-SHA request signing (`hmac` crate)
+**Google Gemini / Vertex AI:**
+- File: `crates/api/src/providers/google.rs`
+- Auth: `GOOGLE_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`; Vertex: `ANTHROPIC_VERTEX_PROJECT_ID` or `CLOUD_ML_PROJECT_ID`
+- Transport: HTTPS with SSE streaming
 
-**Azure OpenAI**
-- Provider file: `crates/api/src/providers/azure.rs`
-- Auth env vars: `AZURE_API_KEY`, `AZURE_RESOURCE_NAME`, `AZURE_API_VERSION`
+**AWS Bedrock:**
+- File: `crates/api/src/providers/bedrock.rs`
+- Auth: AWS SigV4 signed requests (HMAC-SHA256 in `crates/api`)
+- Config: `AWS_REGION` / `AWS_DEFAULT_REGION`, `AWS_BEDROCK_MODEL_ID`
+- Transport: HTTPS
 
-**Cohere**
-- Provider file: `crates/api/src/providers/cohere.rs`
-- Auth env var: `COHERE_API_KEY`
+**Azure OpenAI:**
+- File: `crates/api/src/providers/azure.rs`
+- Auth: `AZURE_API_KEY`
 
-**GitHub Copilot**
-- Provider file: `crates/api/src/providers/copilot.rs`
-- Auth: API key passed via config
+**GitHub Copilot:**
+- File: `crates/api/src/providers/copilot.rs`
+- Auth: `GITHUB_TOKEN`
 
-**OpenAI Codex**
-- Provider file: `crates/api/src/providers/codex.rs`, adapter: `crates/api/src/codex_adapter.rs`
-- Auth: stored credentials (not an env var key)
+**Cohere:**
+- File: `crates/api/src/providers/cohere.rs`
+- Auth: `COHERE_API_KEY`
 
-**MiniMax**
-- Provider file: `crates/api/src/providers/minimax.rs`
-- Auth: API key passed via config
+**MiniMax:**
+- File: `crates/api/src/providers/minimax.rs`
+- Auth: `MINIMAX_API_KEY`
+- Endpoint: `https://api.minimax.io/anthropic` (overrideable via `MINIMAX_BASE_URL`)
 
-### OpenAI-Compatible Providers (via `crates/api/src/providers/openai_compat_providers.rs`)
+**OpenAI Codex:**
+- File: `crates/api/src/providers/codex.rs`
+- Auth: handled via `crates/core/src/codex_oauth.rs` OAuth flow
 
-All use `reqwest` with OpenAI-format JSON API:
+### OpenAI-Compatible Providers (`crates/api/src/providers/openai_compat_providers.rs`)
 
-| Provider ID | Base URL | Auth env var |
-|-------------|----------|-------------|
-| `ollama` | `http://localhost:11434/v1` (configurable) | None (local) |
-| `deepseek` | `https://api.deepseek.com/v1` | Provider API key |
-| `groq` | `https://api.groq.com/openai/v1` | Provider API key |
-| `xai` | xAI API | Provider API key |
-| `togetherai` / `together-ai` | `https://api.together.xyz/v1` | Provider API key |
-| `qwen` | Alibaba Cloud | Provider API key |
-| `mistral` | `https://api.mistral.ai/v1` | Provider API key |
-| `openrouter` | `https://openrouter.ai/api/v1` | Provider API key |
+All use the same HTTP+SSE transport as OpenAI, each with a different base URL and API key env var.
 
-### Web Search
+| Provider ID | Env Var | Default Base URL |
+|------------|---------|-----------------|
+| `ollama` | `OLLAMA_HOST` | `http://localhost:11434/v1` |
+| `lmstudio` | `LM_STUDIO_HOST` | `http://localhost:1234/v1` |
+| `llamacpp` | `LLAMA_CPP_HOST` | `http://localhost:8080/v1` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com/v1` |
+| `groq` | `GROQ_API_KEY` | `https://api.groq.com/openai/v1` |
+| `xai` | `XAI_API_KEY` | `https://api.x.ai/v1` |
+| `deepinfra` | `DEEPINFRA_API_KEY` | `https://api.deepinfra.com/v1/openai` |
+| `cerebras` | `CEREBRAS_API_KEY` | `https://api.cerebras.ai/v1` |
+| `togetherai` | `TOGETHER_API_KEY` | `https://api.together.xyz/v1` |
+| `perplexity` | `PERPLEXITY_API_KEY` | `https://api.perplexity.ai` |
+| `venice` | `VENICE_API_KEY` | `https://api.venice.ai/api/v1` |
+| `qwen` | `DASHSCOPE_API_KEY` | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` |
+| `mistral` | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1` |
+| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
+| `sambanova` | `SAMBANOVA_API_KEY` | `https://api.sambanova.ai/v1` |
+| `huggingface` | `HF_TOKEN` | `https://api-inference.huggingface.co/v1` |
+| `nvidia` | `NVIDIA_API_KEY` | `https://integrate.api.nvidia.com/v1` |
+| `siliconflow` | `SILICONFLOW_API_KEY` | `https://api.siliconflow.cn/v1` |
+| `moonshot` | `MOONSHOT_API_KEY` | `https://api.moonshot.cn/v1` |
+| `zhipu` | `ZHIPU_API_KEY` | `https://open.bigmodel.cn/api/paas/v4` |
+| `zai` | `ZAI_API_KEY` | (custom) |
+| `nebius` | `NEBIUS_API_KEY` | `https://api.studio.nebius.ai/v1` |
+| `novita` | `NOVITA_API_KEY` | `https://api.novita.ai/v3/openai` |
+| `ovhcloud` | `OVHCLOUD_API_KEY` | (custom) |
+| `scaleway` | `SCALEWAY_API_KEY` | (custom) |
+| `vultr` | `VULTR_API_KEY` | `https://api.vultrinference.com/v1` |
+| `baseten` | `BASETEN_API_KEY` | (custom) |
+| `friendli` | `FRIENDLI_TOKEN` | `https://inference.friendli.ai/v1` |
+| `upstage` | `UPSTAGE_API_KEY` | `https://api.upstage.ai/v1` |
+| `stepfun` | `STEPFUN_API_KEY` | `https://api.stepfun.com/v1` |
+| `fireworks` | `FIREWORKS_API_KEY` | `https://api.fireworks.ai/inference/v1` |
 
-- **Brave Search API** — primary web search backend
-  - File: `crates/tools/src/web_search.rs`
-  - Auth env var: `BRAVE_SEARCH_API_KEY`
-  - Fallback: DuckDuckGo (no API key required)
-- **WebFetch** — direct HTTP page fetch via `reqwest`
-  - File: `crates/tools/src/web_fetch.rs`
+AI gateway providers also listed in `crates/core/src/lib.rs`:
+- `cloudflare` / `cloudflare-ai-gateway` — `CLOUDFLARE_API_TOKEN`
+- `vercel` — `AI_GATEWAY_API_KEY`
+- `helicone` — `HELICONE_API_KEY`
+- `sap` / `sap-ai-core` — `AICORE_SERVICE_KEY`
+- `gitlab` — `GITLAB_TOKEN`
 
-## Services / Databases
+## Data Storage
 
-### Embedded SQLite
+**Embedded SQLite:**
+- Crate: `rusqlite` 0.31 (bundled — no system dependency)
+- Implementation: `crates/core/src/sqlite_storage.rs`
+- Location: `~/.claurst/` (exact filename determined at runtime)
+- Schema: `sessions` table + `messages` table with indexes on `session_id` and `updated_at`
+- Purpose: Session history, message transcripts
+- Alternative: JSONL flat file storage (also in `crates/core/src/session_storage.rs`)
 
-- Library: `rusqlite` `0.31` (bundled — SQLite compiled into the binary)
-- Storage file: `crates/core/src/sqlite_storage.rs`
-- Purpose: Conversation history, session persistence, prompt history
-- Location: Platform config directory (`dirs` crate resolves path)
-- Also accessed from ACP server: `crates/acp/src/lib.rs`
+**Filesystem:**
+- Credential store: `~/.claurst/auth.json` (`crates/core/src/auth_store.rs`)
+- Feature flag cache: `~/.claurst/feature_flags.json` (`crates/core/src/feature_flags.rs`)
+- Prompt history: `~/.claurst/` (managed by `crates/core/src/prompt_history.rs`)
+- Plugin archives: downloaded via HTTPS, extracted to local dir (`crates/plugins`)
+- Temporary files: `tempfile` crate for intermediate operations
 
-### CCR Remote Sessions (Claude.ai Bridge)
+## Authentication & Identity
 
-- Purpose: Mirrors a local Claurst session to claude.ai for remote access
-- Implementation: `crates/bridge/src/lib.rs`
-- Protocol: WebSocket (`tokio-tungstenite`) + HTTP (`reqwest`)
-- Session registration: CCR server endpoint (Anthropic-hosted)
-- Feature gates: `ccr_auto_connect`, `ccr_mirror`, `ccr_remote_setup` (in `claurst-core` features)
-- Remote session types: `crates/core/src/remote_session.rs`
+**Multi-path auth — resolved in priority order:**
+1. Environment variable (e.g. `ANTHROPIC_API_KEY`)
+2. `~/.claurst/auth.json` stored credential (API key or OAuth token)
+3. Interactive login flow
 
-### Plugin Marketplace
+**OAuth 2.0 Flows:**
 
-- Purpose: Plugin discovery, download, and installation
-- Implementation: `crates/plugins/src/` 
-- Transport: HTTP (`reqwest`) for marketplace API and plugin archive downloads
-- Archive format: ZIP (extracted via `zip` crate)
-- Integrity: SHA-256 hash verification (`sha2` + `hex`)
+*Anthropic / Claude.ai OAuth:*
+- Implementation: `crates/core/src/oauth_config.rs`, `crates/cli/src/oauth_flow.rs`
+- Scopes: `user:inference`, `user:profile`, `user:sessions:claude_code`, `user:mcp_servers`, `user:file_upload`
+- Endpoints: claude.ai authorization server and api.anthropic.com token endpoint
+- Flow: Authorization Code with PKCE (device-code variant for headless)
 
-## Auth
+*Device Code Flow:*
+- Implementation: `crates/core/src/device_code.rs`
+- Used when browser is unavailable; displays QR code via `qrcode` crate
 
-**API Key auth (most providers):** Plain bearer token in `Authorization` header; key sourced from environment variables (see provider list above).
+*OpenAI Codex OAuth:*
+- Implementation: `crates/core/src/codex_oauth.rs`, `crates/cli/src/codex_oauth_flow.rs`
 
-**AWS Bedrock auth:** SigV4-style request signing using `hmac` + `sha2`; credentials from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` or `AWS_BEARER_TOKEN_BEDROCK` for token-based auth.
+*MCP OAuth:*
+- Implementation: `crates/mcp/src/oauth.rs`
+- Used when MCP servers require OAuth authorization
 
-**Azure auth:** API key in header; `AZURE_API_KEY` + `AZURE_RESOURCE_NAME` + `AZURE_API_VERSION` required.
+**Credential Storage:**
+- `crates/core/src/auth_store.rs` — JSON store at `~/.claurst/auth.json`
+- Stores both `ApiKey { key }` and `OAuthToken { access, refresh, expires }` variants
+- Cryptographic utilities in `crates/core/src/crypto_utils.rs`
 
-**Codex auth:** Stored credentials (not env var); loaded via `CodexProvider::from_stored()`.
+## Model Context Protocol (MCP)
 
-**No centralized auth framework** — each provider handles its own credential resolution inside its `from_config()` / `new()` constructor.
+**Role:** Outbound client — connects Claurst to external MCP tool/resource servers
 
-## Notable Third-Party SDKs
+**Implementation:** `crates/mcp/`
+- `rmcp` 1.4.0 SDK — protocol transport and framing
+- `crates/mcp/src/lib.rs` — connection manager, tool discovery, tool execution
+- `crates/mcp/src/backend/` — stdio (subprocess) and HTTP/SSE transports
+- `crates/mcp/src/rmcp_backend.rs` — `rmcp` adapter
 
-**`rmcp` `1.4.0`** — Official Rust MCP (Model Context Protocol) SDK
-- Used in: `crates/mcp/src/lib.rs`, `crates/mcp/src/rmcp_backend.rs`
-- Features enabled: `client`, `auth`, `transport-child-process`, `transport-streamable-http-client-reqwest`, `reqwest-native-tls`
-- Supports: child-process stdio transport (local MCP servers), streamable HTTP transport (remote MCP servers), legacy SSE transport
+**Transports supported:**
+- Stdio (subprocess) — MCP server launched as child process
+- HTTP/SSE (streamable HTTP) — remote MCP servers
+- OAuth-authenticated MCP servers (`crates/mcp/src/oauth.rs`)
 
-**`portable-pty` `0.9`** — PTY (pseudo-terminal) support
-- Used in: `crates/tools/src/pty_bash.rs`
-- Purpose: Wraps Bash execution in a real PTY so interactive programs behave correctly
+**Config:** MCP server definitions in `~/.claurst/settings.json` under `mcpServers` key (`McpServerConfig` type)
 
-**`enigo` `0.2`** — Keyboard and mouse automation
-- Used in: `crates/tools/src/computer_use.rs` (gated behind `computer-use` feature)
+## Remote Bridge (claude.ai Web UI)
 
-**`xcap` `0.0.13`** — Cross-platform screen capture
-- Used in: `crates/tools/src/computer_use.rs` (gated behind `computer-use` feature)
+**Role:** Bidirectional long-poll bridge connecting local CLI to claude.ai web sessions
 
-**`cpal` `0.15`** — Cross-platform audio I/O
-- Used in: `crates/core/src/` (voice recorder, gated behind `voice` feature)
-- Also pulled into `claurst-tui` for voice PTT mode
+**Implementation:** `crates/bridge/src/lib.rs`
+- Protocol mirrors TypeScript `bridgeMain.ts` / `bridgeApi.ts`
+- Device fingerprinting via SHA-256 for trusted-device identification
+- JWT decode utilities (client-side, no signature verification) for session-ingress tokens
+- Long-polling with exponential backoff and `CancellationToken`
+- External URL: `https://api.claude.ai` (hardcoded in `crates/core/src/remote_session.rs`)
 
-**`arboard` `3`** — Cross-platform clipboard access
-- Used in: `crates/commands/src/lib.rs`
+**Feature gate:** `bridge_mode` compile-time feature flag in `crates/core`
 
-**`syntect` `5`** — Syntax highlighting engine
-- Used in: `crates/tui/src/` for code block rendering in the TUI
-- Config: `default-syntaxes`, `default-themes`, `regex-fancy` features
+## Remote Session Sync
 
-**`icy_sixel` `0.5`** — Sixel graphics protocol encoder
-- Used in: `crates/tui/src/` for in-terminal image rendering
+**Role:** Sync local session transcripts to claude.ai cloud
 
-**`qrcode` `0.14`** — QR code generation
-- Used in: `crates/commands/src/lib.rs` for session sharing
+**Implementation:** `crates/core/src/remote_session.rs`
+- WebSocket client via `tokio-tungstenite`
+- Base URL: `https://api.claude.ai`
+- Auth: OAuth `access_token` Bearer header
+- Session events: `SessionCreated`, `SessionUpdated`, `SessionDeleted` over WebSocket
 
-## Communication Protocols
+## Web Search
 
-**HTTP/HTTPS (REST + SSE):**
-- All LLM provider API calls — streaming via Server-Sent Events (SSE) parsed in `crates/api/src/stream_parser.rs`
-- Web search (Brave, DuckDuckGo), web fetch
-- Plugin marketplace
-- CCR bridge registration
+**Role:** Web search tool for agent use
 
-**WebSocket (WSS):**
-- Remote session sync — `crates/core/src/remote_session.rs`
-- CCR bridge real-time channel — `crates/bridge/src/lib.rs`
-- MCP servers over HTTP/WS — `crates/mcp/`
-- Library: `tokio-tungstenite` with `native-tls`
+**Implementation:** `crates/tools/src/web_search.rs`
 
-**JSON-RPC 2.0 over stdio:**
-- ACP (Agent Client Protocol) server — `crates/acp/src/lib.rs`
-- Purpose: Editor integrations (Zed, VS Code) communicate with Claurst as a subprocess
-- MCP child-process transport (via `rmcp`) — `crates/mcp/src/rmcp_backend.rs`
+**Primary: Brave Search API**
+- Env var: `BRAVE_SEARCH_API_KEY`
+- Endpoint: `https://api.search.brave.com/res/v1/web/search`
 
-**PTY (pseudo-terminal):**
-- Bash tool execution — `crates/tools/src/pty_bash.rs`
-- MCP local server process launch via `rmcp` transport
+**Fallback: DuckDuckGo**
+- No API key required
+- Endpoint: `https://duckduckgo.com/` (HTML scrape)
+- Used when `BRAVE_SEARCH_API_KEY` is absent or empty
 
-## Feature Flags
+## Feature Flags (GrowthBook)
 
-**GrowthBook** — remote feature flag management
-- File: `crates/core/src/feature_flags.rs`
-- API endpoint: `https://api.growthbook.io/api/features`
-- Auth env var: `GROWTHBOOK_API_KEY`
-- Caches flags locally; falls back to defaults if unavailable
+**Role:** Remote feature flag management
 
-## Observability
+**Implementation:** `crates/core/src/feature_flags.rs`
+- Service: GrowthBook (`https://api.growthbook.io/api/features`)
+- Auth: `GROWTHBOOK_API_KEY` env var
+- Cache: `~/.claurst/feature_flags.json` (1-hour TTL)
+- Fallback: cached flags if fetch fails; empty if no cache
 
-**Telemetry:**
-- File: `crates/core/src/analytics.rs`
-- First-party analytics events (no PII); defaults to **off**
-- Opt-in env var: `CLAURST_ENABLE_TELEMETRY=1`
-- OSS build ships a no-op stub for all telemetry functions — all data is discarded unless a first-party endpoint is configured
+## Plugin Marketplace
 
-**Structured logging:**
-- `tracing` / `tracing-subscriber` throughout all crates
-- JSON log format available via `tracing-subscriber` json feature
+**Role:** Download and install community plugins
 
-## Environment Variables Reference
+**Implementation:** `crates/plugins/src/`
+- HTTP downloads via `reqwest`
+- Archive format: ZIP with `deflate` (extracted via `zip` crate)
+- Integrity: SHA-256 hash verification
+- Install path: local user directory (resolved via `dirs`)
 
-| Variable | Purpose |
-|----------|---------|
-| `ANTHROPIC_API_KEY` | Anthropic API authentication |
-| `OPENAI_API_KEY` | OpenAI API authentication |
-| `GOOGLE_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` | Google Gemini auth |
-| `ANTHROPIC_VERTEX_PROJECT_ID` / `CLOUD_ML_PROJECT_ID` | Google Vertex AI project |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | AWS Bedrock credentials |
-| `AWS_BEARER_TOKEN_BEDROCK` | AWS Bedrock token auth alternative |
-| `AWS_REGION` / `AWS_DEFAULT_REGION` | AWS region for Bedrock |
-| `AWS_BEDROCK_MODEL_ID` | Override Bedrock model ID |
-| `AZURE_API_KEY` | Azure OpenAI API key |
-| `AZURE_RESOURCE_NAME` | Azure resource name |
-| `AZURE_API_VERSION` | Azure API version |
-| `COHERE_API_KEY` | Cohere API authentication |
-| `BRAVE_SEARCH_API_KEY` | Brave Search web search |
-| `GROWTHBOOK_API_KEY` | GrowthBook feature flags |
-| `CLAURST_ENABLE_TELEMETRY` | Opt-in telemetry (default: off) |
-| `CLAURST_REMOTE` | Enable remote/CCR mode |
-| `CLAURST_SIMPLE` / `--bare` | Minimal/bare UI mode |
-| `CLAURST_SKIP_PROMPT_HISTORY` | Disable prompt history persistence |
+## IDE / Editor Integration
+
+**ACP (Agent Client Protocol):**
+- Implementation: `crates/acp/src/lib.rs`
+- Protocol: JSON-RPC 2.0 over stdio
+- Used by: Zed, VS Code, and other editors to use Claurst as an AI back-end
+- Transport: line-delimited JSON over stdin/stdout
+
+**LSP support:**
+- Implementation: `crates/core/src/lsp.rs`
+- Provides Language Server Protocol integration for code context
+
+## Monitoring & Observability
+
+**Logging:**
+- `tracing` 0.1 + `tracing-subscriber` 0.3 (`env-filter`, `json` features)
+- Log level controlled by `RUST_LOG` env var (standard `EnvFilter`)
+- JSON output format available for structured logging
+
+**Session Metrics:**
+- Implementation: `crates/core/src/analytics.rs`
+- In-process counters (AtomicU64) for cost, tokens, API latency, tool usage
+- No external telemetry destination found — metrics are session-local
+
+## CI/CD & Deployment
+
+**Hosting:** Not detected (library/CLI tool distributed as binary)
+
+**CI Pipeline:** Not detected (no `.github/workflows/` or similar found)
+
+## Webhooks & Callbacks
+
+**Incoming:** None — no HTTP server in this codebase; ACP and MCP use stdio
+
+**Outgoing:** Long-poll requests to claude.ai bridge API (not traditional webhooks)
 
 ---
 
-*Integration audit: 2026-05-04*
+*Integration audit: 2026-05-05*

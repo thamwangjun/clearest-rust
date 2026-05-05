@@ -1,109 +1,261 @@
-# Testing
+# Testing Patterns
 
-**Analysis Date:** 2026-05-04
+**Analysis Date:** 2026-05-05
 
-## Test Strategy
+## Test Framework
 
-The project uses **co-located unit tests** (the vast majority — 116 `#[cfg(test)]` modules, ~1,218 `#[test]` functions) alongside a small set of **integration tests** in dedicated `tests/` directories per crate. There are no E2E tests or benchmark harnesses found.
+**Runner:**
+- Built-in Rust test harness (`cargo test`)
+- No third-party test runner (no `nextest.toml` or `nextest` config detected)
+- Async tests use `#[tokio::test]` from the `tokio` workspace dependency
 
-Tests are self-contained: they construct the types under test directly, use `tempfile` for filesystem isolation, and assert on observable outputs. No mocking framework is used — real implementations are exercised.
+**Assertion Library:**
+- Built-in `assert!`, `assert_eq!`, `assert!(..., "message")` macros only
+- No `rstest`, `proptest`, `mockall`, `insta`, or `criterion` detected in any `Cargo.toml`
 
-## Test Types Present
+**Run Commands:**
+```bash
+cargo test                        # Run all tests in workspace
+cargo test -p claurst-core        # Run tests for a single crate
+cargo test -p claurst-tui         # Run TUI integration tests
+cargo test -- --test-output immediate  # Show output as it happens
+cargo test <test_name>            # Run a specific test by name
+```
 
-### 1. Inline Unit Tests (`#[cfg(test)] mod tests`)
+## Test File Organization
 
-The dominant pattern. Found in 116 source files. Each source module ends with:
+**Location:**
+- **Unit tests:** Co-located in the same source file using `#[cfg(test)] mod tests { ... }` — the dominant pattern
+- **Integration tests:** Separate `tests/` directories at the crate root for `claurst-core` and `claurst-tui`
 
+**Crates with integration test directories:**
+- `crates/core/tests/` — `parity_smoke.rs`, `test_mcp_templates.rs`
+- `crates/tui/tests/` — `diff_viewer.rs`, `markdown_enhancements.rs`, `render_snapshots.rs`
+
+**Naming:**
+- Unit test modules are always named `mod tests`
+- Integration test files named after the feature or module being tested: `diff_viewer.rs`, `render_snapshots.rs`
+- Test functions use `snake_case` with descriptive names: `test_safe_commands`, `parse_diff_returns_hunks`, `assistant_text_renders_lines`
+- Parity/smoke tests prefixed `test_` or named as assertions: `session_dir_encoding`, `file_history_record_and_query`
+
+**Structure:**
+```
+crates/
+├── core/
+│   ├── src/
+│   │   ├── bash_classifier.rs      ← #[cfg(test)] mod tests inside
+│   │   ├── error_handling.rs       ← #[cfg(test)] mod tests inside
+│   │   ├── feature_flags.rs        ← #[cfg(test)] mod tests inside
+│   │   └── ...
+│   └── tests/
+│       ├── parity_smoke.rs         ← integration tests
+│       └── test_mcp_templates.rs   ← integration tests
+├── tui/
+│   ├── src/
+│   │   ├── stats_dialog.rs         ← #[cfg(test)] mod tests inside
+│   │   └── ...
+│   └── tests/
+│       ├── diff_viewer.rs          ← integration tests
+│       ├── markdown_enhancements.rs
+│       └── render_snapshots.rs
+└── tools/
+    └── src/
+        ├── bash.rs                 ← #[cfg(test)] mod tests inside
+        ├── apply_patch.rs          ← #[cfg(test)] mod tests inside
+        ├── computer_use.rs         ← #[cfg(test)] mod tests inside
+        └── ...
+```
+
+## Test Structure
+
+**Unit test module boilerplate:**
 ```rust
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_hunk_header() {
-        assert_eq!(parse_hunk_header("@@ -12,5 +12,6 @@").unwrap(), 11);
+    fn test_safe_commands() {
+        assert_eq!(classify_bash_command("ls -la"), BashRiskLevel::Safe);
+        assert_eq!(classify_bash_command("grep foo bar.txt"), BashRiskLevel::Safe);
+    }
+
+    #[test]
+    fn test_medium_commands() {
+        assert_eq!(classify_bash_command("rm -r ./build"), BashRiskLevel::Medium);
     }
 }
 ```
 
-Files with significant inline test coverage include:
-- `crates/tools/src/apply_patch.rs` — 5 tests for patch parsing and application
-- `crates/tools/src/computer_use.rs` — 16 tests for coordinate/key parsing
-- `crates/tools/src/bash.rs` — 4 tests for env-var parsing and sanitisation
-- `crates/tools/src/bundled_skills.rs` — 12 tests for skill text/content helpers
-- `crates/tools/src/monitor_tool.rs` — 3 sync + 4 async tests for pattern matching
-- `crates/core/src/session_storage.rs` — 3 async tests for session dir encoding
-- `crates/core/src/team_memory_sync.rs` — 4 async tests for sync logic
-- `crates/core/src/feature_flags.rs`, `keybindings.rs`, `skill_discovery.rs`, `system_prompt.rs`, `feature_gates.rs` — all have inline test modules
-- `crates/core/src/lib.rs` — tests at line 3737 including `ClaudeError::is_retryable()` assertions
-- `crates/mcp/src/rmcp_backend.rs` — 4 async tests for MCP backend behaviour
-- `crates/plugins/src/lib.rs` — 2 async tests
-
-### 2. Integration Tests (`crates/*/tests/`)
-
-Located in the `tests/` directory at the crate level — Rust's standard integration test location (each file is compiled as a separate crate with access to the public API only).
-
-**`crates/core/tests/`:**
-- `parity_smoke.rs` — 7 tests verifying core data structures (`TranscriptEntry`, `FileHistory`, `HistoryEntry`, `Message`, token estimation, AGENTS.md loading). Uses `tempfile::TempDir` for filesystem tests.
-- `test_mcp_templates.rs` — 6 tests for `TemplateRenderer::render()` covering substitution, nested paths, missing variables, multi-occurrence, and type coercion.
-
-**`crates/tui/tests/`:**
-- `render_snapshots.rs` — 28 tests covering every message render function (`render_assistant_text`, `render_tool_use`, `render_tool_result_success`, `render_thinking_block`, `render_rate_limit_banner`, `render_hook_progress`, `render_code_block`, `render_user_command`, `render_user_memory_input`, `render_user_local_command_output`, etc.). Tests use a `flatten()` helper to collapse `ratatui::text::Line` spans into a single `String` for assertion.
-- `markdown_enhancements.rs` — table detection, multi-row tables, alignment detection, inline formatting (`bold`, `italic`, `strikethrough`, `code`) tests.
-- `diff_viewer.rs` — 8 tests for `parse_unified_diff()` covering single/multi-file diffs, added/removed/context lines, hunk ranges, and stats.
-
-### 3. Async Tests (`#[tokio::test]`)
-
-Used wherever the function under test is `async`. Found in 19 locations across:
-- `crates/tools/src/monitor_tool.rs` (4 tests)
-- `crates/core/src/session_storage.rs` (3 tests)
-- `crates/core/src/team_memory_sync.rs` (4 tests)
-- `crates/core/src/session_tracing.rs` (1 test)
-- `crates/core/src/lsp.rs` (1 test)
-- `crates/plugins/src/lib.rs` (2 tests)
-- `crates/mcp/src/rmcp_backend.rs` (4 tests)
-
-Pattern:
+**Integration test boilerplate:**
 ```rust
-#[tokio::test]
-async fn test_session_write_read() {
-    let tmp = TempDir::new().unwrap();
-    // ...
+//! T5-1 parity smoke tests.
+//! Verifies that core data structures are usable as the TS CLI would use them.
+
+use claurst_core::{
+    session_storage::{TranscriptEntry, transcript_dir},
+    message_utils::{estimate_tokens, get_message_text},
+};
+use tempfile::TempDir;
+
+#[test]
+fn session_dir_encoding() {
+    let root = PathBuf::from("/home/user/project");
+    let dir = transcript_dir(&root);
+    assert!(dir.to_string_lossy().contains("projects"));
 }
 ```
 
-## Test Coverage (estimated)
+**Patterns:**
+- Unit test modules always placed at the bottom of the source file, after all production code
+- `use super::*;` as the first statement in every `mod tests` block
+- Section divider comments (`// ---`) used within large test modules to group related tests
+- Test names are descriptive English phrases: `test_cache_path`, `parse_diff_has_added_lines`, `thinking_block_collapsed`
 
-**High coverage areas:**
-- `crates/tools/src/apply_patch.rs` — core patch parsing and application logic is well tested
-- `crates/tools/src/computer_use.rs` — coordinate/key parsing, click/drag/type actions
-- `crates/core/` data structures (error types, message utils, session storage, feature flags)
-- `crates/tui/` rendering functions (render_snapshots.rs covers almost every public render function)
+## Async Tests
 
-**Low/no coverage areas:**
-- `crates/api/` — no test files found
-- `crates/cli/` — no test files found; the binary entry point (`crates/cli/src/main.rs`) is untested
-- `crates/query/` — no test files found
-- `crates/commands/` — no test files found
-- `crates/bridge/` — no test files found
-- `crates/acp/` — no test files found
-- `crates/buddy/` — no test files found
-- Most tool implementations (file_edit, file_read, file_write, glob_tool, grep_tool, web_fetch, web_search, cron, etc.) have no unit tests
+**Pattern:** `#[tokio::test]` for async tests (45 async tests vs 1 221 sync tests across the workspace):
 
-**Total test function count:** ~1,218 `#[test]` instances (dominated by inline unit tests).
-
-## Test Utilities / Helpers
-
-**`tempfile` crate (`tempfile::TempDir`, `tempfile::tempdir()`):**
-Used in ~18 locations for filesystem-dependent tests. Pattern:
 ```rust
-let tmp = TempDir::new().unwrap();
-let path = tmp.path().join("file.txt");
-std::fs::write(&path, "content").unwrap();
+#[tokio::test]
+async fn monitor_list_empty() {
+    let tool = MonitorTool;
+    let input = json!({"action": "list"});
+    let ctx = make_test_ctx();
+    let result = tool.execute(input, &ctx).await;
+    assert!(!result.is_error, "list action should not return an error: {}", result.content);
+}
 ```
 
-**`flatten()` helper in TUI integration tests:**
-Defined locally in each TUI test file — collapses `ratatui::text::Line` spans into a `String`:
+Async tests appear primarily in `crates/tools/src/monitor_tool.rs` for tests that exercise `async fn execute()` on tool implementations.
+
+## Mocking
+
+**Framework:** None — no `mockall`, `mockito`, or similar frameworks used.
+
+**Patterns for isolation:**
+- **`tempfile::TempDir`** for filesystem isolation in integration tests:
+  ```rust
+  let tmp = TempDir::new().unwrap();
+  let files = load_all_memory_files(tmp.path());
+  ```
+- **Inline construction** of test contexts using `make_test_ctx()` helper functions defined within the test module:
+  ```rust
+  fn make_test_ctx() -> ToolContext {
+      let handler = Arc::new(AutoPermissionHandler {
+          mode: claurst_core::config::PermissionMode::Default,
+      });
+      ToolContext {
+          working_dir: PathBuf::from("."),
+          permission_mode: claurst_core::config::PermissionMode::Default,
+          permission_handler: handler,
+          cost_tracker: claurst_core::cost::CostTracker::new(),
+          session_id: "test-monitor".to_string(),
+          // ...
+      }
+  }
+  ```
+- **`serde_json::json!` macro** to construct tool inputs without a full builder:
+  ```rust
+  let input = json!({"action": "list"});
+  let input = json!({"action": "status"});
+  ```
+- **Direct struct construction** for domain types:
+  ```rust
+  let msg = Message {
+      role: Role::User,
+      content: MessageContent::Text("hello world".to_string()),
+      uuid: None,
+      cost: None,
+  };
+  ```
+
+**What to Mock:**
+- File system access: use `TempDir` from `tempfile` crate
+- Tool contexts: construct `ToolContext` manually with `AutoPermissionHandler`
+
+**What NOT to Mock:**
+- HTTP calls — tests avoid exercising network code paths; async fetch logic is tested only at the unit level (e.g., `test_flag_default_false` does not call the API)
+- Database access — `TempDir` + real SQLite used when needed
+
+## Fixtures and Factories
+
+**Test Data:**
+- Multi-line string constants for parser tests:
+  ```rust
+  const SIMPLE_DIFF: &str = r#"diff --git a/src/main.rs b/src/main.rs
+  --- a/src/main.rs
+  +++ b/src/main.rs
+  @@ -1,5 +1,6 @@
+   fn main() {
+  -    println!("hello");
+  +    println!("hello, world");
+   }
+  "#;
+  ```
+- `serde_json::json!` macro for structured data:
+  ```rust
+  let context = json!({
+      "name": "Database",
+      "description": "Query operations"
+  });
+  ```
+
+**Location:**
+- Fixtures defined as `const` or `let` bindings within each test function or at the top of the test module
+- No shared fixture files (`fixtures/`, `testdata/`) detected
+- `tempfile::TempDir` used as a factory for temporary filesystem state
+
+## Coverage
+
+**Requirements:** None enforced — no coverage threshold configuration detected in any `Cargo.toml` or CI config.
+
+**View Coverage:**
+```bash
+# Using cargo-llvm-cov (if installed):
+cargo llvm-cov --workspace
+
+# Using grcov (alternative):
+RUSTFLAGS="-C instrument-coverage" cargo test
+```
+
+No coverage tooling is configured in the workspace; adding it would require separate setup.
+
+## Test Types
+
+**Unit Tests:**
+- Scope: Pure functions and deterministic logic — risk classifiers, parsers, formatters, cache validity checks
+- Location: `#[cfg(test)] mod tests` block at bottom of each source file
+- Approach: Call the function under test directly, assert on return value with `assert_eq!` / `assert!`
+- Count: 1 221 sync + 45 async across the workspace
+
+**Integration Tests:**
+- Scope: Cross-module public API surface — message rendering, diff parsing, core data structure round-trips
+- Location: `crates/core/tests/` and `crates/tui/tests/`
+- Approach: Import public types from the crate, construct realistic inputs, assert on observable behavior
+- Example crates with integration tests: `claurst-core`, `claurst-tui`
+
+**E2E Tests:**
+- Not used — no end-to-end or UI automation framework detected
+
+## Common Patterns
+
+**Assertion style — prefer descriptive failure messages:**
+```rust
+// Preferred: include context in assertion failure messages
+assert!(!result.is_error, "list action should not return an error: {}", result.content);
+assert!(has_hunks, "should have at least one hunk");
+
+// Also common: simple equality without message for obvious assertions
+assert_eq!(classify_bash_command("ls -la"), BashRiskLevel::Safe);
+```
+
+**Flatten helper for TUI span content:**
+Integration tests in `crates/tui/tests/` define a local `flatten()` helper to extract text from rendered `ratatui::text::Line` spans:
 ```rust
 fn flatten(lines: &[ratatui::text::Line<'_>]) -> String {
     lines
@@ -112,38 +264,47 @@ fn flatten(lines: &[ratatui::text::Line<'_>]) -> String {
         .collect()
 }
 ```
-Defined in both `crates/tui/tests/render_snapshots.rs` and `crates/tui/tests/markdown_enhancements.rs` (duplicated, not shared via a helper crate).
+This helper is duplicated across test files (not shared); copy it when adding new TUI tests.
 
-**`serde_json::json!` macro:**
-Used in MCP template integration tests for constructing `Value` contexts inline:
+**Unwrap in tests:**
+`unwrap()` and `expect()` are acceptable in test code. Use `.unwrap()` for values that must be present (a missing value is a test failure). Use `expect("description")` when the failure message needs context:
 ```rust
-let context = json!({ "name": "Database", "description": "Query operations" });
+let (table, _) = detect_table(&lines, 0).expect("Table should be detected");
+let json = serde_json::to_string(&entry).unwrap();
 ```
 
-**`use super::*`:**
-Standard import in every inline `mod tests` block — pulls all items from the parent module into scope without needing to re-qualify.
+**Error testing:**
+```rust
+#[test]
+fn test_parse_error_response_auth() {
+    let pid = ProviderId::new("anthropic");
+    let err = parse_error_response(401, r#"{"error":{"message":"Invalid API key"}}"#, &pid);
+    assert!(matches!(err, ProviderError::AuthFailed { .. }));
+}
+```
+Use `matches!` macro for enum variant matching without binding fields.
 
-**No mock framework** (e.g., `mockall`, `mockito`) is used anywhere in the workspace. Tests rely on real implementations or construct minimal in-memory state.
-
-## CI / Quality Gates
-
-**No `.github/workflows/` directory found.** There is no CI pipeline configuration in this repository.
-
-**No `cargo-tarpaulin` or coverage tooling** configured.
-
-**Run commands:**
-```bash
-cargo test                        # Run all tests in the workspace
-cargo test -p claurst-core        # Run tests for a specific crate
-cargo test -p claurst-tools       # Run tools tests only
-cargo test -p claurst-tui         # Run TUI integration tests
-cargo test -- --nocapture         # Show println! output during tests
+**Boundary / edge case coverage pattern:**
+Tests are grouped by risk or classification level — each group covers one representative scenario per class:
+```rust
+#[test] fn test_safe_commands() { ... }     // one test per level
+#[test] fn test_low_commands() { ... }
+#[test] fn test_medium_commands() { ... }
+#[test] fn test_high_commands() { ... }
+#[test] fn test_critical_commands() { ... }
 ```
 
-**Formatting / linting (manual):**
-```bash
-cargo fmt                         # Format (uses default rustfmt settings; no rustfmt.toml)
-cargo clippy                      # Lint (no clippy.toml; default lints + inline allows)
+**Serialization round-trip pattern:**
+```rust
+#[test]
+fn history_entry_roundtrip() {
+    let entry = HistoryEntry { display: "test prompt".to_string(), ... };
+    let json = serde_json::to_string(&entry).unwrap();
+    let decoded: HistoryEntry = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded.display, "test prompt");
+}
 ```
 
-No coverage target, no required passing gates, no enforced test-before-merge policy is detectable from the repository configuration alone.
+---
+
+*Testing analysis: 2026-05-05*

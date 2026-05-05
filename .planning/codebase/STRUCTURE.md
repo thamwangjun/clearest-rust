@@ -1,338 +1,396 @@
-# Project Structure
+# Codebase Structure
 
-**Analysis Date:** 2026-05-04
+**Analysis Date:** 2026-05-05
 
 ## Directory Layout
 
 ```
-src-rust/                          # Cargo workspace root
-├── Cargo.toml                     # Workspace manifest, shared deps
-├── crates/
-│   ├── core/                      # Foundation library — shared types, config, auth
-│   │   ├── Cargo.toml
-│   │   ├── src/
-│   │   │   ├── lib.rs             # Module declarations + inline error/types/config/history/permissions modules
-│   │   │   ├── session_storage.rs # JSONL transcript persistence
-│   │   │   ├── sqlite_storage.rs  # SQLite-backed session storage
-│   │   │   ├── auth_store.rs      # API key + OAuth token credential store
-│   │   │   ├── device_code.rs     # RFC 8628 device-code OAuth flow
-│   │   │   ├── attachments.rs     # Per-turn context attachment pipeline
-│   │   │   ├── claudemd.rs        # AGENTS.md hierarchical memory loading
-│   │   │   ├── settings_sync.rs   # Remote settings sync
-│   │   │   ├── snapshot.rs        # Per-session file snapshot / undo system
-│   │   │   ├── feature_flags.rs   # GrowthBook feature flag manager
-│   │   │   ├── skill_discovery.rs # Filesystem + git URL skill loading
-│   │   │   ├── keybindings.rs     # User keybinding resolution
-│   │   │   ├── voice.rs           # Voice capture (optional, behind `voice` feature)
-│   │   │   └── ...                # 40+ additional modules
-│   │   └── tests/                 # Integration tests for core types
-│   │
-│   ├── api/                       # LLM provider abstraction + Anthropic API client
-│   │   ├── Cargo.toml
+clearest-rust/                  # Cargo workspace root
+├── Cargo.toml                  # Workspace manifest — members, shared deps, workspace.package
+├── Cargo.lock                  # Dependency lockfile (committed)
+├── crates/                     # All library and binary crates
+│   ├── acp/                    # Agent Client Protocol — JSON-RPC 2.0 stdio server
+│   │   └── src/lib.rs
+│   ├── api/                    # LLM provider abstraction layer
 │   │   └── src/
-│   │       ├── lib.rs             # Public re-exports, module declarations
-│   │       ├── provider.rs        # `LlmProvider` trait definition
-│   │       ├── provider_types.rs  # Provider-agnostic request/response types
-│   │       ├── provider_error.rs  # `ProviderError` type
-│   │       ├── auth.rs            # `AuthProvider` + `LoginFlow` traits
-│   │       ├── registry.rs        # `ProviderRegistry` — routes requests to providers
-│   │       ├── stream_parser.rs   # SSE + JSON-lines stream parsers
-│   │       ├── transform.rs       # `MessageTransformer` trait
-│   │       ├── model_registry.rs  # Dynamic model metadata (models.dev)
-│   │       ├── error_handling.rs  # Provider-aware error classification
-│   │       ├── cch.rs             # Claude.ai cache-and-credit helper
-│   │       ├── codex_adapter.rs   # OpenAI Codex adapter
-│   │       ├── providers/         # Concrete provider adapters
+│   │       ├── lib.rs
+│   │       ├── provider.rs         # LlmProvider trait
+│   │       ├── provider_types.rs   # ProviderRequest/Response/StreamEvent types
+│   │       ├── provider_error.rs   # ProviderError typed errors
+│   │       ├── auth.rs             # Provider auth helpers
+│   │       ├── registry.rs         # ProviderRegistry
+│   │       ├── model_registry.rs   # ModelRegistry (multi-provider model listing)
+│   │       ├── stream_parser.rs    # SSE streaming parser
+│   │       ├── transform.rs        # Message transform trait
+│   │       ├── error_handling.rs   # Retry and error classification
+│   │       ├── cch.rs              # Prompt cache helpers
+│   │       ├── codex_adapter.rs    # Codex/OpenAI Codex adapter
+│   │       ├── providers/          # Concrete provider adapters
 │   │       │   ├── mod.rs
-│   │       │   ├── anthropic.rs   # Anthropic Messages API
-│   │       │   ├── openai.rs      # OpenAI Chat Completions
-│   │       │   ├── google.rs      # Google Gemini
-│   │       │   ├── bedrock.rs     # AWS Bedrock
-│   │       │   ├── azure.rs       # Azure OpenAI
-│   │       │   ├── copilot.rs     # GitHub Copilot
-│   │       │   ├── codex.rs       # OpenAI Codex
-│   │       │   ├── cohere.rs      # Cohere
-│   │       │   ├── minimax.rs     # MiniMax
-│   │       │   ├── openai_compat.rs          # Generic OpenAI-compatible base
-│   │       │   ├── openai_compat_providers.rs # 30+ provider factories (groq, ollama, etc.)
-│   │       │   ├── message_normalization.rs   # Cross-provider message normalization
-│   │       │   └── request_options.rs         # Provider-specific request options
-│   │       └── transformers/      # Concrete message transformer implementations
-│   │
-│   ├── tools/                     # All LLM-callable tool implementations
-│   │   ├── Cargo.toml
+│   │       │   ├── anthropic.rs
+│   │       │   ├── openai.rs
+│   │       │   ├── openai_compat.rs
+│   │       │   ├── openai_compat_providers.rs  # Groq, Ollama, etc. via OpenAI compat
+│   │       │   ├── google.rs
+│   │       │   ├── azure.rs
+│   │       │   ├── bedrock.rs
+│   │       │   ├── cohere.rs
+│   │       │   ├── copilot.rs
+│   │       │   ├── codex.rs
+│   │       │   ├── minimax.rs
+│   │       │   ├── message_normalization.rs
+│   │       │   └── request_options.rs
+│   │       └── transformers/       # Message format transformers
+│   │           ├── mod.rs
+│   │           ├── anthropic.rs
+│   │           └── openai_chat.rs
+│   ├── bridge/                 # Remote bridge to claude.ai web UI
+│   │   └── src/lib.rs
+│   ├── buddy/                  # Companion/Tamagotchi system
+│   │   └── src/lib.rs
+│   ├── cli/                    # Binary crate — the `claurst` executable
+│   │   ├── build.rs            # Embeds BUILD_TIME, GIT_COMMIT, etc.
 │   │   └── src/
-│   │       ├── lib.rs             # `Tool` trait, `ToolResult`, `ToolContext`, `PermissionLevel`
-│   │       ├── bash.rs            # BashTool (legacy subprocess)
-│   │       ├── pty_bash.rs        # PtyBashTool (PTY-based, persistent shell state)
-│   │       ├── file_read.rs       # FileReadTool
-│   │       ├── file_edit.rs       # FileEditTool (search-and-replace edits)
-│   │       ├── file_write.rs      # FileWriteTool
-│   │       ├── apply_patch.rs     # ApplyPatchTool (unified diff)
-│   │       ├── batch_edit.rs      # BatchEditTool
-│   │       ├── glob_tool.rs       # GlobTool
-│   │       ├── grep_tool.rs       # GrepTool
-│   │       ├── web_fetch.rs       # WebFetchTool
-│   │       ├── web_search.rs      # WebSearchTool
-│   │       ├── agent_tool.rs      # AgentTool (spawns sub-agents)
-│   │       ├── tasks.rs           # Task lifecycle tools (TaskCreate/Get/Update/Stop/Output)
-│   │       ├── todo_write.rs      # TodoWriteTool
-│   │       ├── send_message.rs    # SendMessageTool (inter-agent messaging)
-│   │       ├── team_tool.rs       # TeamCreate/Delete (agent swarms)
-│   │       ├── computer_use.rs    # ComputerUseTool (screen capture, input — feature-gated)
-│   │       ├── skill_tool.rs      # SkillTool (user-defined slash commands)
-│   │       ├── notebook_edit.rs   # NotebookEditTool (Jupyter)
-│   │       ├── mcp_resources.rs   # ListMcpResourcesTool, ReadMcpResourceTool
-│   │       ├── lsp_tool.rs        # LspTool (LSP diagnostics)
-│   │       ├── remote_trigger.rs  # RemoteTriggerTool
-│   │       ├── monitor_tool.rs    # MonitorTool
-│   │       ├── worktree.rs        # EnterWorktree/ExitWorktreeTool
-│   │       ├── cron.rs            # CronCreate/Delete/List
-│   │       ├── powershell.rs      # PowerShellTool (Windows)
-│   │       ├── formatter.rs       # try_format_file helper
-│   │       └── ...                # ask_user, brief, config_tool, enter/exit_plan_mode, repl_tool, sleep, synthetic_output
-│   │
-│   ├── query/                     # Agentic conversation loop
-│   │   ├── Cargo.toml
+│   │       ├── main.rs         # Entry point, arg parsing, mode dispatch
+│   │       ├── oauth_flow.rs   # Anthropic OAuth device flow
+│   │       └── codex_oauth_flow.rs  # Codex OAuth flow
+│   ├── commands/               # Slash command framework
 │   │   └── src/
-│   │       ├── lib.rs             # `run_query_loop()`, `QueryConfig`, `QueryEvent`, `QueryOutcome`
-│   │       ├── compact.rs         # Auto-compact, micro-compact, context-collapse logic
-│   │       ├── agent_tool.rs      # `AgentTool` integration + swarm runner init
-│   │       ├── coordinator.rs     # Coordinator / worker agent modes
-│   │       ├── managed_orchestrator.rs # Managed agent orchestration
-│   │       ├── command_queue.rs   # `CommandQueue` — TUI→loop command injection
-│   │       ├── context_analyzer.rs     # Context window analysis
-│   │       ├── session_memory.rs  # Memory extraction from sessions
-│   │       ├── skill_prefetch.rs  # Background skill index loading
-│   │       ├── cron_scheduler.rs  # Cron job scheduler
-│   │       ├── auto_dream.rs      # Auto-dream (background reflection) feature
-│   │       └── away_summary.rs    # Away-summary generation
-│   │
-│   ├── tui/                       # Terminal UI (ratatui + crossterm)
-│   │   ├── Cargo.toml
+│   │       ├── lib.rs          # SlashCommand trait, CommandContext, CommandResult
+│   │       └── named_commands.rs   # Named CLI subcommands (agents, ide, branch, …)
+│   ├── core/                   # Foundation crate — shared types and utilities
 │   │   ├── src/
-│   │   │   ├── lib.rs             # Terminal setup/teardown, module declarations
-│   │   │   ├── app.rs             # `App` struct, main event loop, state machine
-│   │   │   ├── render.rs          # All ratatui layout and widget rendering
-│   │   │   ├── prompt_input.rs    # Input field (vim mode, history, typeahead, paste)
-│   │   │   ├── messages/          # Per-message-type renderers
-│   │   │   ├── transcript_turn.rs # Turn grouping and metadata
-│   │   │   ├── virtual_list.rs    # Virtualized scrollable message list
-│   │   │   ├── overlays.rs        # Help, history-search, message selector, rewind
-│   │   │   ├── dialogs.rs         # Permission and confirmation dialogs
-│   │   │   ├── settings_screen.rs # Full-screen tabbed settings
-│   │   │   ├── model_picker.rs    # Model/effort picker overlay
-│   │   │   ├── session_browser.rs # Session history browser
-│   │   │   ├── mcp_view.rs        # MCP server management UI
-│   │   │   ├── agents_view.rs     # Agent definitions list + coordinator progress
-│   │   │   ├── diff_viewer.rs     # Two-pane diff viewer dialog
-│   │   │   ├── stats_dialog.rs    # Token usage and cost charts
-│   │   │   ├── notifications.rs   # Notification / banner system
-│   │   │   ├── bridge_state.rs    # Bridge connection status badge
-│   │   │   ├── plugin_views.rs    # Plugin hint/recommendation UI
-│   │   │   ├── theme_colors.rs    # Color palette for themes
-│   │   │   ├── theme_screen.rs    # Theme picker overlay
-│   │   │   ├── voice_capture.rs   # Voice PTT UI (behind `voice` feature)
-│   │   │   ├── kitty_image.rs     # Kitty graphics protocol inline images
-│   │   │   ├── image_paste.rs     # Clipboard image paste + Ctrl+V
-│   │   │   ├── figures.rs         # Icon/figure constants (matches figures.ts)
-│   │   │   └── ...                # 20+ additional dialog/screen modules
-│   │   └── tests/                 # TUI unit tests
-│   │
-│   ├── commands/                  # Slash command system
-│   │   ├── Cargo.toml
+│   │   │   ├── lib.rs              # Module declarations and pub re-exports
+│   │   │   ├── attachments.rs      # Per-turn context attachment pipeline
+│   │   │   ├── auth_store.rs       # API key and OAuth token storage
+│   │   │   ├── auto_mode.rs        # Auto permission mode logic
+│   │   │   ├── bash_classifier.rs  # Bash command safety classification
+│   │   │   ├── claudemd.rs         # AGENTS.md hierarchical memory loading
+│   │   │   ├── cloud_session.rs    # Cloud session API
+│   │   │   ├── codex_oauth.rs      # Codex OAuth helpers
+│   │   │   ├── context_collapse.rs # Context collapse / compaction helpers
+│   │   │   ├── crypto_utils.rs     # Hashing and crypto utilities
+│   │   │   ├── device_code.rs      # OAuth Device Code Flow (RFC 8628)
+│   │   │   ├── effort.rs           # EffortLevel for extended thinking
+│   │   │   ├── feature_flags.rs    # GrowthBook feature flag integration
+│   │   │   ├── feature_gates.rs    # Compile-time feature gate helpers
+│   │   │   ├── file_history.rs     # Per-session file modification history
+│   │   │   ├── format_utils.rs     # Output formatting utilities
+│   │   │   ├── git_utils.rs        # Git status and diff utilities
+│   │   │   ├── ide.rs              # IDE environment detection
+│   │   │   ├── import_config.rs    # Config import (CLAUDE.md, settings.json)
+│   │   │   ├── keybindings.rs      # Keybinding resolver
+│   │   │   ├── lsp.rs              # LSP integration helpers
+│   │   │   ├── mcp_templates.rs    # MCP resource prompt template rendering
+│   │   │   ├── memdir.rs           # Memory directory management
+│   │   │   ├── message_utils.rs    # Message manipulation utilities
+│   │   │   ├── migrations.rs       # SQLite schema migrations
+│   │   │   ├── oauth_config.rs     # OAuth provider configuration
+│   │   │   ├── output_styles.rs    # Output style variants
+│   │   │   ├── prompt_history.rs   # Prompt input history persistence
+│   │   │   ├── provider_id.rs      # ProviderId and ModelId newtypes
+│   │   │   ├── ps_classifier.rs    # PowerShell command classifier
+│   │   │   ├── remote_session.rs   # Remote session sync
+│   │   │   ├── remote_settings.rs  # Remote settings sync
+│   │   │   ├── session_storage.rs  # JSONL session transcript persistence
+│   │   │   ├── session_tracing.rs  # Session event tracing
+│   │   │   ├── settings_sync.rs    # Settings synchronization
+│   │   │   ├── skill_discovery.rs  # Filesystem and git URL skill loading
+│   │   │   ├── snapshot.rs         # File snapshot/undo system
+│   │   │   ├── sqlite_storage.rs   # SQLite-backed session storage
+│   │   │   ├── status_notices.rs   # Status notice management
+│   │   │   ├── system_prompt.rs    # System prompt assembly
+│   │   │   ├── team_memory_sync.rs # Team memory synchronization
+│   │   │   ├── tips.rs             # Tip-of-the-day system
+│   │   │   ├── token_budget.rs     # Token budget tracking
+│   │   │   ├── truncate.rs         # Message truncation utilities
+│   │   │   ├── update_check.rs     # Background update checker
+│   │   │   └── voice.rs            # Voice recording (optional cpal feature)
+│   │   └── tests/
+│   │       ├── parity_smoke.rs
+│   │       └── test_mcp_templates.rs
+│   ├── mcp/                    # Model Context Protocol client
 │   │   └── src/
-│   │       ├── lib.rs             # `SlashCommand` trait, `CommandContext`, `CommandResult`
-│   │       └── named_commands.rs  # All concrete slash command implementations
-│   │
-│   ├── mcp/                       # Model Context Protocol client
-│   │   ├── Cargo.toml
+│   │       ├── lib.rs
+│   │       ├── backend.rs          # MCP backend trait and implementations
+│   │       ├── connection_manager.rs  # Connection lifecycle with backoff
+│   │       ├── oauth.rs            # MCP OAuth 2.0 flow
+│   │       ├── registry.rs         # MCP server registry
+│   │       └── rmcp_backend.rs     # rmcp SDK integration
+│   ├── plugins/                # Plugin runtime
 │   │   └── src/
-│   │       ├── lib.rs             # `McpManager`, env-var expansion, public re-exports
-│   │       ├── backend.rs         # Raw MCP transport (stdio subprocess)
-│   │       ├── rmcp_backend.rs    # `rmcp` crate-backed transport (streamable HTTP)
-│   │       ├── connection_manager.rs # `McpConnectionManager`, reconnection, status
-│   │       ├── registry.rs        # Tool/resource/prompt discovery registry
-│   │       └── oauth.rs           # MCP OAuth flows
-│   │
-│   ├── plugins/                   # Plugin runtime
-│   │   ├── Cargo.toml
+│   │       ├── lib.rs
+│   │       ├── hooks.rs            # Hook registry and event dispatch
+│   │       ├── loader.rs           # Plugin discovery from filesystem
+│   │       ├── manifest.rs         # Plugin manifest schema (TOML)
+│   │       ├── marketplace.rs      # Plugin marketplace download
+│   │       ├── plugin.rs           # LoadedPlugin, PluginCommandDef
+│   │       └── registry.rs         # PluginRegistry
+│   ├── query/                  # Agentic query loop and orchestration
 │   │   └── src/
-│   │       ├── lib.rs             # `GLOBAL_HOOK_REGISTRY`, `GLOBAL_PLUGIN_REGISTRY`, capability enforcement
-│   │       ├── manifest.rs        # `PluginManifest` struct, hook/MCP/LSP config types
-│   │       ├── plugin.rs          # `LoadedPlugin`, `PluginCommandDef`, `PluginError`
-│   │       ├── loader.rs          # `discover_plugins()`, directory search logic
-│   │       ├── registry.rs        # `PluginRegistry` — lookup and dispatch
-│   │       ├── hooks.rs           # `HookRegistry`, `RegisteredHook`, hook firing
-│   │       └── marketplace.rs     # Plugin marketplace: search, download, verify (sha2)
-│   │
-│   ├── bridge/                    # claude.ai web remote-control bridge
-│   │   ├── Cargo.toml
+│   │       ├── lib.rs              # Main query loop, QueryConfig, QueryOutcome, QueryEvent
+│   │       ├── agent_tool.rs       # AgentTool — spawns sub-agents
+│   │       ├── auto_dream.rs       # Auto-dream background suggestions
+│   │       ├── away_summary.rs     # Away summary generation
+│   │       ├── command_queue.rs    # CommandQueue bridging TUI → query loop
+│   │       ├── compact.rs          # Context compaction (auto-compact, micro-compact)
+│   │       ├── context_analyzer.rs # Context window analysis
+│   │       ├── coordinator.rs      # Coordinator/worker agent mode
+│   │       ├── cron_scheduler.rs   # Cron-based background tasks
+│   │       ├── managed_orchestrator.rs  # Managed agent (manager-executor) pattern
+│   │       ├── session_memory.rs   # Session memory extraction
+│   │       └── skill_prefetch.rs   # Skill index prefetch
+│   ├── tools/                  # All tool implementations
 │   │   └── src/
-│   │       └── lib.rs             # JWT decode, device fingerprint, session lifecycle, long-poll loop
-│   │
-│   ├── acp/                       # Agent Client Protocol server
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       └── lib.rs             # JSON-RPC 2.0 over stdio: initialize, session/*, tool/list, model/list
-│   │
-│   ├── buddy/                     # Companion/Tamagotchi system
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       └── lib.rs             # Mulberry32 PRNG, deterministic companion traits, persistence
-│   │
-│   └── cli/                       # Binary crate (the `claurst` executable)
-│       ├── Cargo.toml
-│       └── src/
-│           ├── main.rs            # Entry point: arg parsing, mode routing, McpToolWrapper
-│           ├── oauth_flow.rs      # Claude.ai / Console OAuth web flow
-│           ├── codex_oauth_flow.rs# OpenAI Codex OAuth flow
-│           └── system_prompt.txt  # Embedded default system prompt
-│
-├── .planning/
-│   └── codebase/                  # GSD codebase map documents (this directory)
-│
-└── target/                        # Cargo build output (not committed)
+│   │       ├── lib.rs              # Tool trait, ToolContext, ToolResult, PermissionLevel
+│   │       ├── agent_tool.rs       # Agent spawning tool
+│   │       ├── apply_patch.rs      # Patch application tool
+│   │       ├── ask_user.rs         # Interactive user question tool
+│   │       ├── bash.rs             # BashTool — shell command execution
+│   │       ├── batch_edit.rs       # Batch file edit tool
+│   │       ├── brief.rs            # BriefTool
+│   │       ├── bundled_skills.rs   # Built-in skill definitions
+│   │       ├── computer_use.rs     # Screen capture + mouse/keyboard (optional)
+│   │       ├── config_tool.rs      # Config read/write tool
+│   │       ├── cron.rs             # Cron management tools
+│   │       ├── enter_plan_mode.rs  # Enter plan mode tool
+│   │       ├── exit_plan_mode.rs   # Exit plan mode tool
+│   │       ├── file_edit.rs        # FileEditTool — targeted file editing
+│   │       ├── file_read.rs        # FileReadTool — file content reading
+│   │       ├── file_write.rs       # FileWriteTool — file creation/overwrite
+│   │       ├── formatter.rs        # Post-edit code formatter
+│   │       ├── glob_tool.rs        # GlobTool — file pattern matching
+│   │       ├── grep_tool.rs        # GrepTool — content search
+│   │       ├── lsp_tool.rs         # LSP diagnostics tool
+│   │       ├── mcp_auth_tool.rs    # MCP OAuth trigger tool
+│   │       ├── mcp_resources.rs    # MCP resource list/read tools
+│   │       ├── monitor_tool.rs     # Process monitoring tool
+│   │       ├── notebook_edit.rs    # Jupyter notebook edit tool
+│   │       ├── powershell.rs       # PowerShell execution tool
+│   │       ├── pty_bash.rs         # PTY-based bash (interactive processes)
+│   │       ├── remote_trigger.rs   # Remote trigger tool
+│   │       ├── repl_tool.rs        # REPL execution tool
+│   │       ├── send_message.rs     # SendMessageTool (inter-agent communication)
+│   │       ├── skill_tool.rs       # Skill invocation tool
+│   │       ├── sleep.rs            # SleepTool
+│   │       ├── synthetic_output.rs # SyntheticOutput tool
+│   │       ├── tasks.rs            # Task management tools
+│   │       ├── team_tool.rs        # Team swarm tools
+│   │       ├── todo_write.rs       # TodoWriteTool
+│   │       ├── tool_search.rs      # Tool search/discovery
+│   │       ├── web_fetch.rs        # WebFetchTool — URL content fetch
+│   │       ├── web_search.rs       # WebSearchTool
+│   │       └── worktree.rs         # Git worktree management tool
+│   └── tui/                    # Terminal UI
+│       ├── src/
+│       │   ├── lib.rs              # TUI init/teardown, module declarations
+│       │   ├── app.rs              # App struct, main event loop, slash command list
+│       │   ├── render.rs           # All ratatui rendering logic
+│       │   ├── input.rs            # Slash command parsing helpers
+│       │   ├── agents_view.rs      # Agents list/detail view
+│       │   ├── bridge_state.rs     # Bridge connection status
+│       │   ├── bypass_permissions_dialog.rs
+│       │   ├── context_viz.rs      # /context overlay
+│       │   ├── custom_provider_dialog.rs
+│       │   ├── desktop_upsell_startup.rs
+│       │   ├── device_auth_dialog.rs
+│       │   ├── dialog_select.rs    # Generic selection dialog
+│       │   ├── dialogs.rs          # Permission and MCP approval dialogs
+│       │   ├── diff_viewer.rs      # Git diff viewer
+│       │   ├── elicitation_dialog.rs
+│       │   ├── export_dialog.rs    # /export format picker
+│       │   ├── feedback_survey.rs
+│       │   ├── figures.rs          # Icon/figure constants
+│       │   ├── hooks_config_menu.rs
+│       │   ├── image_paste.rs      # Clipboard image paste
+│       │   ├── import_config_dialog.rs
+│       │   ├── invalid_config_dialog.rs
+│       │   ├── key_input_dialog.rs
+│       │   ├── kitty_image.rs      # Kitty graphics protocol image rendering
+│       │   ├── mcp_view.rs         # /mcp server browser
+│       │   ├── memory_file_selector.rs
+│       │   ├── memory_update_notification.rs
+│       │   ├── message_copy.rs     # Clipboard copy of messages
+│       │   ├── model_picker.rs     # Model and effort level picker
+│       │   ├── notifications.rs    # Notification/banner queue
+│       │   ├── onboarding_dialog.rs
+│       │   ├── overage_upsell.rs
+│       │   ├── overlays.rs         # Help, history-search, message-selector, rewind
+│       │   ├── plugin_views.rs     # Plugin hint banners
+│       │   ├── privacy_screen.rs
+│       │   ├── prompt_input.rs     # PromptInputState, vim mode
+│       │   ├── rustle.rs           # Rustle mascot rendering
+│       │   ├── session_branching.rs
+│       │   ├── session_browser.rs  # Session history browser
+│       │   ├── settings_screen.rs  # Full-screen settings UI
+│       │   ├── stats_dialog.rs     # Token/cost stats dialog
+│       │   ├── tasks_overlay.rs    # Live tasks (agent workers) overlay
+│       │   ├── theme_colors.rs     # Theme color palette
+│       │   ├── theme_screen.rs     # Theme picker screen
+│       │   ├── transcript_turn.rs  # Individual conversation turn rendering
+│       │   ├── virtual_list.rs     # Virtual scrolling list widget
+│       │   ├── voice_capture.rs    # Voice PTT capture UI
+│       │   ├── voice_mode_notice.rs
+│       │   └── messages/           # Markdown rendering sub-module
+│       │       ├── mod.rs
+│       │       ├── markdown.rs
+│       │       └── markdown_enhanced.rs
+│       └── tests/
+│           ├── diff_viewer.rs
+│           ├── markdown_enhancements.rs
+│           └── render_snapshots.rs
+├── .planning/                  # GSD planning workspace (not compiled)
+│   ├── codebase/               # Codebase map documents
+│   ├── phases/                 # Phase plans
+│   ├── quick/                  # Quick task notes
+│   └── research/               # Research notes
+└── target/                     # Cargo build artifacts (gitignored)
 ```
 
-## Crate Inventory
+## Directory Purposes
 
-| Crate name | Package name | Type | Purpose |
-|------------|-------------|------|---------|
-| `crates/cli` | `claurst` | **bin** | CLI entry point; `claurst` binary |
-| `crates/core` | `claurst-core` | lib | Foundation: types, config, auth, permissions, sessions, feature flags |
-| `crates/api` | `claurst-api` | lib | Multi-provider LLM abstraction + Anthropic client; streaming SSE |
-| `crates/tools` | `claurst-tools` | lib | All `Tool` implementations (~35 tools); `Tool` trait definition |
-| `crates/query` | `claurst-query` | lib | Agentic conversation loop; auto-compact; multi-agent coordinator |
-| `crates/tui` | `claurst-tui` | lib | ratatui terminal UI; event loop; all dialogs and overlays |
-| `crates/commands` | `claurst-commands` | lib | Slash command framework (`/model`, `/compact`, `/help`, etc.) |
-| `crates/mcp` | `claurst-mcp` | lib | MCP JSON-RPC 2.0 client; tool/resource/prompt discovery |
-| `crates/plugins` | `claurst-plugins` | lib | Plugin loader; hook registry; marketplace; capability enforcement |
-| `crates/bridge` | `claurst-bridge` | lib | claude.ai web remote-control bridge (long-poll) |
-| `crates/acp` | `claurst-acp` | lib | ACP server — JSON-RPC 2.0 over stdio for editor integration |
-| `crates/buddy` | `claurst-buddy` | lib | Companion/Tamagotchi system |
+**`crates/core/src/`:**
+- Purpose: Foundation — all shared primitives with zero workspace-crate dependencies
+- Contains: Config/Settings, types, auth, permissions, session storage, context building
+- Key files: `lib.rs` (all module declarations), `session_storage.rs`, `sqlite_storage.rs`, `auth_store.rs`
 
-## Module Organization per Crate
+**`crates/api/src/providers/`:**
+- Purpose: One file per LLM provider adapter
+- Contains: Anthropic, OpenAI, Google, Azure, Bedrock, Cohere, Copilot, Codex, Minimax, OpenAI-compat wrappers
+- Key files: `anthropic.rs` (primary), `openai_compat.rs` (base for Groq/Ollama/etc.)
 
-### `claurst-core` (`crates/core/src/lib.rs`)
+**`crates/tools/src/`:**
+- Purpose: One file per tool implementation; all implement the `Tool` trait
+- Contains: 30+ tool files plus `lib.rs` with trait definition
+- Key files: `lib.rs` (Tool trait), `bash.rs`, `file_edit.rs`, `file_read.rs`, `file_write.rs`
 
-All sub-modules are declared in `lib.rs`. Key inline module blocks (not separate files):
-- `error` — `ClaudeError` enum, `Result<T>` alias
-- `types` — `ContentBlock`, `Message`, `Role`, `ToolDefinition`, `UsageInfo`
-- `config` — `Config`, `Settings`, `McpServerConfig`, `PermissionMode`, `AgentDefinition`
-- `history` — `ConversationSession`
-- `cost` — `CostTracker`
-- `permissions` — `PermissionHandler` trait, `PermissionManager`, all implementations
-- `constants` — `APP_VERSION`, `ANTHROPIC_API_VERSION`, tool name constants
+**`crates/tui/src/`:**
+- Purpose: All terminal UI code; each file is a distinct screen, dialog, or overlay
+- Contains: App state, rendering, all dialogs, overlays, and view components
+- Key files: `app.rs` (App struct + event loop), `render.rs` (all drawing)
 
-File-per-module for: `session_storage`, `sqlite_storage`, `auth_store`, `device_code`, `attachments`, `claudemd`, `feature_flags`, `snapshot`, `skill_discovery`, `keybindings`, `voice`, and ~25 more.
+**`crates/query/src/`:**
+- Purpose: Agentic query loop and orchestration logic
+- Key files: `lib.rs` (main loop + QueryConfig/QueryOutcome), `compact.rs`, `coordinator.rs`
 
-### `claurst-api` (`crates/api/src/`)
+**`crates/mcp/src/`:**
+- Purpose: MCP protocol client implementation
+- Key files: `lib.rs`, `connection_manager.rs`, `backend.rs`, `rmcp_backend.rs`
 
-Organized in phases matching the provider abstraction rollout:
-- Phase 1A: `provider_types.rs` — unified request/response types
-- Phase 1B: `provider.rs`, `auth.rs`, `stream_parser.rs`, `transform.rs` — traits
-- Phase 1C: `registry.rs` — `ProviderRegistry`
-- Phase 1D: `providers/` — concrete adapters (Anthropic, OpenAI, Google, Bedrock, Azure, Copilot, Codex, Cohere, MiniMax, 30+ OpenAI-compat)
-- Phase 3: `model_registry.rs` — dynamic model metadata
-- Phase 4: `transformers/` — concrete transformers
-- Phase 6: `error_handling.rs` — provider-aware error classification
-
-The original Anthropic-only client lives in inline `client` and `streaming` modules inside `lib.rs` (still re-exported as `AnthropicClient`, `AnthropicStreamEvent`, `StreamHandler`).
-
-### `claurst-tools` (`crates/tools/src/`)
-
-One file per tool. Common tool groupings:
-- **File I/O:** `file_read.rs`, `file_edit.rs`, `file_write.rs`, `apply_patch.rs`, `batch_edit.rs`
-- **Search:** `glob_tool.rs`, `grep_tool.rs`
-- **Shell:** `bash.rs`, `pty_bash.rs`, `powershell.rs`
-- **Web:** `web_fetch.rs`, `web_search.rs`
-- **Agent/task:** `agent_tool.rs`, `tasks.rs`, `send_message.rs`, `team_tool.rs`, `remote_trigger.rs`
-- **UI/interaction:** `ask_user.rs`, `enter_plan_mode.rs`, `exit_plan_mode.rs`
-- **System:** `computer_use.rs` (feature-gated), `cron.rs`, `sleep.rs`, `worktree.rs`
-- **MCP:** `mcp_resources.rs`, `mcp_auth_tool.rs`
-- **Dev:** `lsp_tool.rs`, `notebook_edit.rs`, `repl_tool.rs`, `todo_write.rs`
-
-### `claurst-query` (`crates/query/src/`)
-
-- `lib.rs` — `run_query_loop()` (the main agentic loop, ~2000 lines), `QueryConfig`, `QueryEvent`, `QueryOutcome`
-- `compact.rs` — all auto-compact, micro-compact, context-collapse strategies
-- `coordinator.rs` — coordinator vs. worker mode detection and prompts
-- `managed_orchestrator.rs` — managed agent orchestration (preset agents)
-- `command_queue.rs` — `CommandQueue` for TUI→loop injection
-- `skill_prefetch.rs` — background skill index building
-
-### `claurst-tui` (`crates/tui/src/`)
-
-- `app.rs` — central `App` struct and main crossterm event loop
-- `render.rs` — all ratatui widget rendering (the largest rendering module)
-- `messages/` — subdirectory with per-block-type renderers
-- `overlays.rs` — help, history-search, message selector, rewind flow
-- `dialogs.rs` — permission request and confirmation dialogs
-- `prompt_input.rs` — full vim-mode input field with history and typeahead
-- Other files are focused dialogs/screens (settings, model picker, MCP view, agents view, etc.)
+**`crates/plugins/src/`:**
+- Purpose: Plugin runtime — discovery, manifest, hooks, marketplace
+- Key files: `manifest.rs` (TOML schema), `loader.rs` (discovery), `hooks.rs` (event dispatch)
 
 ## Naming Conventions
 
 **Files:**
-- `snake_case.rs` for all Rust source files
-- One tool per file in `crates/tools/src/`
-- One dialog/screen per file in `crates/tui/src/`
+- `snake_case.rs` throughout — e.g., `file_edit.rs`, `session_storage.rs`, `markdown_enhanced.rs`
+- One primary struct/trait per file, file named after the dominant concern
+- Protocol or integration files named after their target: `anthropic.rs`, `openai.rs`, `bedrock.rs`
 
 **Directories:**
-- `snake_case/` for all directories
+- `snake_case` — e.g., `providers/`, `transformers/`, `messages/`
+- Flat within crate `src/` — sub-directories only when grouping multiple related files (`providers/`, `transformers/`, `messages/`)
 
 **Crates:**
-- Workspace crate names: `claurst-<component>` (hyphen-separated)
-- Package path aliases in `Cargo.toml`: `claurst-core`, `claurst-api`, etc.
+- Binary: `claurst` (package name `claurst`, binary name `claurst`)
+- Libraries: `claurst-<name>` — e.g., `claurst-core`, `claurst-api`, `claurst-tools`
+- Workspace dependency alias: same as crate name, e.g., `claurst-core = { path = "crates/core" }`
+
+**Structs/Traits:**
+- `PascalCase` — e.g., `LlmProvider`, `FileEditTool`, `QueryConfig`, `McpManager`
+- Tools named `<Verb><Noun>Tool` — e.g., `FileEditTool`, `WebFetchTool`, `GlobTool`
+- Dialogs named `<Purpose>Dialog` or `<Purpose>DialogState` — e.g., `ExportDialogState`, `McpApprovalDialogState`
+
+**Functions:**
+- `snake_case` — e.g., `run_query_loop()`, `build_system_context()`, `check_permission()`
+- Async functions follow the same convention; no `async_` prefix
+
+## Key File Locations
+
+**Entry Points:**
+- `crates/cli/src/main.rs`: Binary entry, all startup logic, mode dispatch
+- `crates/cli/build.rs`: Build-time metadata embedding
+
+**Configuration:**
+- `Cargo.toml`: Workspace manifest with all shared dependency versions
+- `crates/core/src/lib.rs`: Core type re-exports (Config, Settings, types)
+
+**Core Traits:**
+- `crates/api/src/provider.rs`: `LlmProvider` trait
+- `crates/tools/src/lib.rs`: `Tool` trait, `ToolContext`, `ToolResult`, `PermissionLevel`
+- `crates/commands/src/lib.rs`: `SlashCommand` trait, `CommandContext`, `CommandResult`
+
+**Query Loop:**
+- `crates/query/src/lib.rs`: `run_query_loop()`, `QueryConfig`, `QueryOutcome`, `QueryEvent`
+
+**TUI App State:**
+- `crates/tui/src/app.rs`: `App` struct, event loop, slash command list
+
+**Provider Adapters:**
+- `crates/api/src/providers/`: One file per provider
+
+**Testing:**
+- `crates/core/tests/`: Integration tests for core utilities
+- `crates/tui/tests/`: Snapshot and render tests for TUI components
 
 ## Where to Add New Code
 
 **New LLM provider:**
-- Implement `LlmProvider` trait from `crates/api/src/provider.rs`
-- Add adapter file to `crates/api/src/providers/<name>.rs`
-- Register in `crates/api/src/providers/mod.rs`
-- For OpenAI-compatible: add a factory function in `crates/api/src/providers/openai_compat_providers.rs`
+- Implementation: `crates/api/src/providers/<provider_name>.rs` (implement `LlmProvider`)
+- Register in: `crates/api/src/providers/mod.rs` and `crates/api/src/registry.rs`
+- Auth: `crates/api/src/auth.rs` if new auth pattern needed
+- Transformer: `crates/api/src/transformers/<provider_name>.rs` if message format differs
 
 **New tool:**
-- Add `<tool_name>.rs` to `crates/tools/src/`
-- Implement `Tool` trait (name, description, permission_level, input_schema, execute)
-- Declare module and `pub use` in `crates/tools/src/lib.rs`
-- Add to `all_tools()` vector in `crates/tools/src/lib.rs:483`
+- Implementation: `crates/tools/src/<tool_name>.rs` (implement `Tool` trait)
+- Register in: `crates/tools/src/lib.rs` (`pub mod` + `pub use`)
+- Add to tool list: `crates/cli/src/main.rs` where tools are assembled
 
 **New slash command:**
-- Add implementation to `crates/commands/src/named_commands.rs`
-- Return appropriate `CommandResult` variant
-- Register in `crates/commands/src/lib.rs`
+- Implementation: `crates/commands/src/lib.rs` (add to the command match or new module)
+- Named subcommand: `crates/commands/src/named_commands.rs`
 
-**New TUI dialog or overlay:**
-- Add `<name>_dialog.rs` or `<name>_screen.rs` to `crates/tui/src/`
-- Declare module in `crates/tui/src/lib.rs`
-- Add state struct to `App` in `crates/tui/src/app.rs`
-- Add rendering branch in `crates/tui/src/render.rs`
+**New TUI screen/dialog:**
+- Implementation: `crates/tui/src/<feature_name>.rs`
+- Register in: `crates/tui/src/lib.rs` (`pub mod`)
+- Wire into app: `crates/tui/src/app.rs` (App state field + event handling)
+- Render: `crates/tui/src/render.rs`
 
-**New core type or utility:**
-- Add module file to `crates/core/src/`
-- Declare with `pub mod` in `crates/core/src/lib.rs`
-- Re-export at crate root with `pub use` if widely needed
+**New core utility:**
+- Implementation: `crates/core/src/<utility_name>.rs`
+- Register in: `crates/core/src/lib.rs` (`pub mod` + `pub use` if needed)
 
 **New feature flag:**
-- Add to `[features]` in `crates/core/Cargo.toml`
-- Add pass-through feature in `crates/tui/Cargo.toml` pointing to `claurst-core/<feature>`
-- Gate code with `#[cfg(feature = "...")]`
+- Add to: `crates/core/Cargo.toml` under `[features]`
+- Add pass-through to: `crates/tui/Cargo.toml` and relevant crates
+- Add to `dev_full` group in `crates/core/Cargo.toml`
+
+**New MCP feature:**
+- Implementation: `crates/mcp/src/<feature>.rs`
+- Register in: `crates/mcp/src/lib.rs`
+
+**New plugin capability:**
+- Manifest schema: `crates/plugins/src/manifest.rs`
+- Runtime enforcement: `crates/plugins/src/lib.rs` (`check_plugin_capability`)
 
 ## Special Directories
 
-**`.planning/codebase/`:**
-- Purpose: GSD codebase map documents
-- Generated: By `/gsd-map-codebase` command
+**`.planning/`:**
+- Purpose: GSD project planning workspace
+- Generated: No (manually maintained)
 - Committed: Yes
 
 **`target/`:**
-- Purpose: Cargo build artifacts
+- Purpose: Cargo compilation artifacts
 - Generated: Yes
-- Committed: No (in `.gitignore`)
+- Committed: No (gitignored)
+
+**`crates/cli/src/` (system_prompt.txt):**
+- Purpose: Base system prompt embedded at compile time via `include_str!()`
+- Referenced in: `crates/cli/src/main.rs`
+- Note: Not a `.rs` file but compiled into the binary
 
 ---
 
-*Structure analysis: 2026-05-04*
+*Structure analysis: 2026-05-05*

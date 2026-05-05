@@ -1,255 +1,203 @@
-# Technical Concerns
+# Codebase Concerns
 
-**Analysis Date:** 2026-05-04
+**Analysis Date:** 2026-05-05
 
----
+## Tech Debt
 
-## High Priority Issues
+**God-file modules — commands/lib.rs and tui/app.rs:**
+- Issue: `crates/commands/src/lib.rs` is 8,576 lines; `crates/tui/src/app.rs` is 5,990 lines; `crates/core/src/lib.rs` is 4,246 lines; `crates/cli/src/main.rs` is 3,502 lines. Each mixes unrelated responsibilities and is effectively unmaintainable at its current size.
+- Files: `crates/commands/src/lib.rs`, `crates/tui/src/app.rs`, `crates/core/src/lib.rs`, `crates/cli/src/main.rs`
+- Impact: High friction for any change — impossible to reason about the full state machine, merge conflicts are frequent, and tests cannot target isolated units.
+- Fix approach: Extract sub-modules by responsibility. For `commands/lib.rs` — split named commands into their own files per command group. For `tui/app.rs` — extract event handler, render pipeline, and state update into separate modules. For `core/lib.rs` — move error types, config types, and message types into dedicated files.
 
-### Credentials Stored in Plaintext on Disk
+**Pervasive `.unwrap()` in production paths:**
+- Issue: ~370 `.unwrap()` calls exist across the codebase (after filtering test code). Notable production-path examples: `crates/tools/src/pty_bash.rs:91`, `crates/tools/src/bash.rs:82`, `crates/core/src/team_memory_sync.rs:99`, `crates/core/src/team_memory_sync.rs:374`, `crates/core/src/keybindings.rs:418`, `crates/core/src/system_prompt.rs:572`, `crates/core/src/settings_sync.rs:493`.
+- Files: Widespread — highest density in `crates/tools/src/`, `crates/core/src/`
+- Impact: Any `None`/`Err` on those paths panics the process. The keybindings unwrap at line 418 (`exact.last().unwrap()`) runs on every keypress matching. The system_prompt unwrap at line 572 panics if the dynamic boundary marker is ever absent from the prompt string.
+- Fix approach: Replace with `?` propagation or `unwrap_or_else`. For invariants that should never fail (e.g. regexes compiled from string literals), document with a comment or use a `const`-initialised `OnceLock`.
 
-**Risk:** API keys and OAuth tokens (including `access`, `refresh` tokens) are written to `~/.claurst/auth.json` as plain JSON with no encryption and no restricted file permissions.
-**Files:** `crates/core/src/auth_store.rs:52-60`
-**Detail:** The `save()` method calls `std::fs::write(&path, json)` with default umask permissions. There is no `set_permissions(..., 0o600)` call. Any process running as the same user can read the credentials file.
-**Fix approach:** Apply `std::os::unix::fs::PermissionsExt::set_mode(0o600)` after writing. Consider OS keychain (e.g., `keyring` crate) for long-term improvement.
+**Regex recompiled on every call:**
+- Issue: Several hot paths recompile regex patterns on every invocation instead of caching them in a static. Affected: `crates/tools/src/bash.rs:81` (`extract_exports_from_command` — called per bash command), `crates/tools/src/pty_bash.rs:88` (called per PTY output chunk), `crates/tui/src/messages/markdown.rs:14,20` (URL and email detection, called per render), `crates/tui/src/messages/markdown_enhanced.rs:14,20` (table detection).
+- Files: `crates/tools/src/bash.rs`, `crates/tools/src/pty_bash.rs`, `crates/tui/src/messages/markdown.rs`, `crates/tui/src/messages/markdown_enhanced.rs`
+- Impact: Measurable CPU overhead on every bash execution and every TUI render frame. `Regex::new` is not cheap.
+- Fix approach: Use `once_cell::sync::Lazy<Regex>` statics (pattern already used elsewhere in the codebase, e.g., `crates/bridge/src/lib.rs:233`).
 
-### Unsafe `std::env::set_var` in Multi-Threaded Context
+**Dependency injection via process-global panic on double-init:**
+- Issue: `crates/tools/src/team_tool.rs:60-68` uses a `OnceCell<AgentRunFn>` static and panics if `register_agent_runner` is called more than once. The comment acknowledges this is a circular-dependency workaround.
+- Files: `crates/tools/src/team_tool.rs`
+- Impact: Makes testing multi-agent paths fragile; integration test suites that reinitialise would panic. Documents an architectural coupling that cannot be resolved without refactoring the crate dependency graph.
+- Fix approach: Pass the runner through `ToolContext` instead of a global, breaking the circular dependency at the type level.
 
-**Risk:** `std::env::set_var` / `std::env::remove_var` are called in production code paths that run inside an async Tokio runtime, which spawns multiple threads. This is unsound in Rust 1.81+ (the standard library now documents this as undefined behavior in multi-threaded programs).
-**Files:**
-- `crates/query/src/coordinator.rs:205-215` — coordinator-mode toggling at session resume
-- `crates/core/src/lib.rs:3821-3858` — `ANTHROPIC_API_KEY` mutation in test helpers that run in parallel with `#[tokio::test]`
-- `crates/core/src/import_config.rs:887-901` — `HOME` mutation in tests
-- `crates/core/src/voice.rs:618-652` — kill-switch env var set/remove in voice tests
-- `crates/mcp/src/lib.rs:1416-1439` — env var mutations in multiple MCP tests
-**Fix approach:** Replace env var mutation with thread-local or `Arc<Mutex<Config>>` passing. For tests, use `serial_test` crate or `std::env` mutation only before any threads are spawned.
+**`#[allow(dead_code)]` suppression without cleanup:**
+- Issue: 15+ `#[allow(dead_code)]` annotations across the codebase. Heavy concentration in `crates/core/src/settings_sync.rs` (6 annotations), `crates/cli/src/codex_oauth_flow.rs` (file-level `#![allow(dead_code)]`), `crates/tui/src/app.rs` (multiple).
+- Files: `crates/core/src/settings_sync.rs`, `crates/cli/src/codex_oauth_flow.rs`, `crates/tui/src/app.rs`, `crates/tools/src/computer_use.rs`, `crates/tools/src/web_fetch.rs`
+- Impact: Unmaintained dead code accumulates; future refactors may activate suppressed-but-broken code paths.
+- Fix approach: Delete unreachable code or make it reachable. Remove `#![allow(dead_code)]` from `codex_oauth_flow.rs` and either integrate or delete the module.
 
-### Web Fetch: No Response Body Size Limit Before Buffering
+**Error type inconsistency — `anyhow` vs `ClaudeError`:**
+- Issue: ~374 function signatures use `anyhow::Result` while a typed `ClaudeError` (`crates/core/src/lib.rs:97-144`) exists for structured error handling. The two error systems are mixed without a clear boundary.
+- Files: Across all crates; `ClaudeError` defined in `crates/core/src/lib.rs:97`
+- Impact: Callers cannot match on structured error variants from functions returning `anyhow::Error`. Loss of actionable error distinctions (e.g., `RateLimit` vs `AuthenticationError`).
+- Fix approach: Establish a rule — `anyhow::Result` for leaf/internal functions, `ClaudeError` at public API boundaries. Migrate crate-public functions incrementally.
 
-**Risk:** `crates/tools/src/web_fetch.rs:351` calls `resp.text().await` with no byte limit before reading into memory. A malicious or large HTTP response (e.g., multi-GB download) will be fully buffered before the 100 KB text truncation at line 379 applies. This can exhaust heap memory.
-**Files:** `crates/tools/src/web_fetch.rs:351-386`
-**Fix approach:** Use `resp.bytes_limited(MAX_BYTES)` or stream with `reqwest::Response::chunk()` loop with a running total check before calling `.text()`.
+**No CI/CD pipeline:**
+- Issue: No `.github/` directory, no CI configuration files (`.yml`/`.yaml`) found anywhere in the repository. No `deny.toml` (cargo-deny) or `audit.toml` (cargo-audit) for supply chain security.
+- Files: Repository root
+- Impact: No automated test gate on pull requests, no dependency vulnerability scanning, no enforced lint pass. Regressions can merge without detection.
+- Fix approach: Add a minimal GitHub Actions workflow with `cargo test`, `cargo clippy -- -D warnings`, and `cargo audit`.
 
-### Panics in Production Match Arms
+## Known Bugs
 
-**Risk:** Multiple `match` arms in production code call `panic!()` for cases that are structurally expected to be unreachable but are not proven so by the type system. If an unexpected state occurs (e.g., a race, a serialization bug, or future refactor), these will crash the process.
-**Files:**
-- `crates/core/src/lib.rs:2628, 2654, 2708, 2738, 4142` — `panic!("Expected Ask, got {:?}", other)` in 5 permission manager tests that run in the same binary as integration code
-- `crates/tui/src/elicitation_dialog.rs:641, 762` — `panic!("expected Submitted result")` and `panic!("expected array")`
-- `crates/commands/src/named_commands.rs:1178, 1238` — `panic!("Expected Message")` and `panic!("Unexpected result")`
-- `crates/query/src/lib.rs:2214, 2234, 2256, 2280, 2292` — `panic!("Expected SystemPrompt::Text")`
-- `crates/api/src/providers/message_normalization.rs:112, 135, 138` — panics on unexpected message structure
-**Fix approach:** Return `Err(...)` or a sentinel value instead of panicking. Use `debug_assert!` only for invariants proven impossible by construction.
+**`env::set_var` called from async context without synchronisation:**
+- Symptoms: Tests in `crates/core/src/lib.rs` and `crates/mcp/src/lib.rs` call `std::env::set_var` without holding any global lock. Rust 1.80+ emits a lint for this; in multithreaded test runs (default for `cargo test`) this is a data race.
+- Files: `crates/core/src/lib.rs:3828,3843,3850,3858`, `crates/mcp/src/lib.rs:1416,1439,1440,1449`
+- Trigger: `cargo test` with the default parallel test runner; any test that reads the same env var concurrently.
+- Workaround: The `crates/query/src/coordinator.rs` tests correctly serialise via a `Mutex<()>` guard (`ENV_LOCK`). The `core/lib.rs` API-key tests do not.
 
----
+**`system_prompt` panics on missing dynamic boundary:**
+- Symptoms: `crates/core/src/system_prompt.rs:572` calls `.unwrap()` on `prompt.find(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)`. If any code path produces a system prompt without the boundary marker, the process crashes.
+- Files: `crates/core/src/system_prompt.rs:572`
+- Trigger: A custom or override system prompt that does not include the expected sentinel string.
+- Workaround: None at runtime — the crash is immediate.
 
-## Technical Debt
-
-### Monolithic Files Exceeding 4,000 Lines
-
-**Issue:** Several files have grown to a size that makes them hard to reason about, review, or test in isolation.
-**Files:**
-- `crates/commands/src/lib.rs` — **8,576 lines** (all command handling in a single file)
-- `crates/tui/src/app.rs` — **5,918 lines** (entire TUI application state machine)
-- `crates/core/src/lib.rs` — **4,246 lines** (core types + permission manager + tests mixed)
-- `crates/tui/src/prompt_input.rs` — **3,719 lines** (input widget + vim emulation)
-- `crates/cli/src/main.rs` — **3,502 lines** (CLI argument parsing + all dispatch logic)
-**Impact:** Changes to any of these files risk merge conflicts, accidental breakage of unrelated features, and poor test isolation.
-**Fix approach:** Extract sub-modules. For example, `commands/src/lib.rs` should be split into per-command files under `commands/src/commands/`.
-
-### Pervasive `unwrap()` in Non-Test Code
-
-**Issue:** Approximately 410 `.unwrap()` calls exist outside test modules. While many are on `Mutex::lock()` (which poisons on panic, compounding failures) or `serde_json::to_string` (which should never fail for serializable types), a significant number are on fallible operations where errors are plausible.
-**High-risk examples:**
-- `crates/api/src/codex_adapter.rs:188` — `openai_req["messages"].as_array().unwrap()` (panics if upstream changes response shape)
-- `crates/api/src/providers/codex.rs:96, 196, 210, 239, 1035` — `self.tokens.lock().unwrap()` (poisoned mutex → panic)
-- `crates/bridge/src/lib.rs:1670-1710` — multiple `unwrap()` on serialization in test helpers that run alongside production code
-**Fix approach:** Replace with `?` propagation or `expect()` with descriptive messages. Use `parking_lot::Mutex` (which never poisons) in place of `std::sync::Mutex` for lock sites.
-
-### Mixed `std::sync::Mutex` and `parking_lot::Mutex` Usage
-
-**Issue:** Both mutex implementations are used across the codebase. `std::sync::Mutex` can be poisoned (lock returns `Err` after a panic in a lock holder), whereas `parking_lot::Mutex` never poisons. The inconsistency makes reasoning about panic propagation harder.
-**Files using `std::sync::Mutex`:** `crates/core/src/output_styles.rs:17`, `crates/core/src/prompt_history.rs:22`, `crates/api/src/providers/codex.rs`, `crates/tools/src/lib.rs:261`, `crates/cli/src/main.rs:596`
-**Fix approach:** Standardize on `parking_lot::Mutex` across the codebase (already a workspace dependency).
-
-### Hardcoded Model Snapshot
-
-**Issue:** `crates/api/src/model_registry.rs` maintains a hand-coded list of models (Anthropic, OpenAI, Google, DeepSeek, Zai) with prices, context windows, and capabilities. This snapshot will go stale as providers release new models or change pricing.
-**Files:** `crates/api/src/model_registry.rs:84-118`
-**Impact:** Users cannot access newly released models without a code change and release. The Copilot provider already falls back to a hardcoded list when the API is unavailable (`crates/api/src/providers/copilot.rs:1200-1206`).
-**Fix approach:** Add a periodic refresh that fetches a JSON manifest from a hosted URL, falling back to the bundled snapshot only on failure.
-
-### Dead Code Suppression (`#[allow(dead_code)]`) Widespread
-
-**Issue:** 20+ instances of `#[allow(dead_code)]` exist across the codebase, indicating structs/fields/variants that are defined but not currently used. This is often a sign of incomplete feature work or leftover code from refactors.
-**Files:** `crates/core/src/settings_sync.rs` (9 occurrences), `crates/tui/src/app.rs:134, 183, 4706`, `crates/commands/src/lib.rs:4938, 6610`, `crates/tools/src/computer_use.rs:49-53`, `crates/tools/src/web_fetch.rs:18`, `crates/cli/src/oauth_flow.rs:58, 362`
-**Fix approach:** Remove unused code or, if intentionally future-facing, add a `// used by feature X` comment.
-
-### Large Number of Feature Flags (36 in `dev_full`)
-
-**Issue:** `crates/core/Cargo.toml` defines 36 named feature flags controlling everything from UI widgets to memory systems. Most features are empty (no code behind them) or sparsely gated. This creates a combinatorial testing problem — the CI likely tests only a small subset of combinations.
-**Files:** `crates/core/Cargo.toml:6-71`
-**Impact:** A feature enabled in production but not tested in CI can break silently.
-**Fix approach:** Audit which features are actually shipped in production builds. Consider replacing boolean feature flags with runtime configuration where possible.
-
----
-
-## Missing Pieces
-
-### No Tests for Critical Provider Integrations
-
-**Issue:** The following provider files have zero test coverage:
-- `crates/api/src/providers/copilot.rs` (1,247 lines, GitHub Copilot integration)
-- `crates/api/src/providers/azure.rs` (Azure OpenAI)
-- `crates/api/src/providers/bedrock.rs` (AWS Bedrock + SigV4 signing)
-- `crates/api/src/providers/cohere.rs`
-- `crates/api/src/providers/minimax.rs`
-- `crates/api/src/providers/anthropic.rs`
-- `crates/api/src/transformers/openai_chat.rs`, `crates/api/src/transformers/anthropic.rs`
-**Impact:** Any regression in request formatting or response parsing is undetected until a user reports it.
-**Fix approach:** Add unit tests using mock HTTP responses (e.g., `wiremock` or `httpmock` crate) for at least the happy path and common error cases.
-
-### No Tests for CLI Entry Point
-
-**Issue:** `crates/cli/src/main.rs` (3,502 lines) has zero test coverage. All argument parsing, dispatch logic, and session management are untested.
-**Files:** `crates/cli/src/main.rs`
-**Fix approach:** Extract dispatch logic into testable functions. Add integration tests using `assert_cmd` or `trycmd`.
-
-### No Tests for Key Tool Implementations
-
-**Issue:** The following tool files have no tests:
-- `crates/tools/src/file_edit.rs` — file editing (highest risk for data loss)
-- `crates/tools/src/web_fetch.rs`
-- `crates/tools/src/pty_bash.rs`
-- `crates/tools/src/send_message.rs`
-- `crates/tools/src/ask_user.rs`
-- `crates/tools/src/cron.rs`
-- `crates/tools/src/config_tool.rs`
-**Impact:** `file_edit.rs` in particular is high-risk — a bug in edit application logic causes irreversible file corruption.
-
-### ACP Crate Untested
-
-**Issue:** `crates/acp/src/lib.rs` (285 lines) implements the Agent Client Protocol server with no `#[test]` coverage. The JSON-RPC dispatch and session listing logic are untested.
-**Files:** `crates/acp/src/lib.rs`
-
-### `cron_scheduler` Has No Error Recovery for Failed Tasks
-
-**Issue:** `crates/query/src/cron_scheduler.rs` spawns sub-agent tasks for due cron entries but does not track failure counts or disable runaway tasks. A perpetually failing cron task will fire every minute indefinitely, potentially racking up API costs.
-**Files:** `crates/query/src/cron_scheduler.rs:37-121`
-**Fix approach:** Track consecutive failures per task; disable after N failures with a user-visible warning.
-
----
+**Mutex poison not handled in `rmcp_backend`:**
+- Symptoms: `crates/mcp/src/rmcp_backend.rs` calls `.lock().expect("... mutex poisoned")` at lines 284, 287, 309, 316, 324, 340, 350, 367, 420, 479. If any task panics while holding these locks, all subsequent callers will panic with "mutex poisoned" rather than recovering.
+- Files: `crates/mcp/src/rmcp_backend.rs`
+- Trigger: Any panic inside an MCP background task that holds the endpoint or task mutex.
+- Workaround: Replace `.expect()` with `.unwrap_or_else(|p| p.into_inner())` to recover poisoned locks, as the coordinator tests already do.
 
 ## Security Considerations
 
-### Credentials File Lacks Restricted Permissions
+**`std::env::set_var` / `remove_var` in multithreaded production code:**
+- Risk: `crates/query/src/coordinator.rs:206,211` mutates environment variables inside `unsafe` blocks in production code (not test code). `std::env::set_var` is documented as unsound in multithreaded programs because it can corrupt the process environment (glibc `putenv` is not thread-safe).
+- Files: `crates/query/src/coordinator.rs:203-215`
+- Current mitigation: Comment notes mutation "only happens at session resume time before any worker threads are spawned" — but this is not enforced by the type system.
+- Recommendations: Store coordinator mode in a `AtomicBool` static rather than an environment variable. If env-var propagation to child processes is required, set it before spawning.
 
-See "High Priority Issues" — `crates/core/src/auth_store.rs:52-60`. The `auth.json` file is written world-readable (subject to umask) on POSIX systems.
+**HTTP clients instantiated without timeouts:**
+- Risk: Multiple sites call `reqwest::Client::new()` without setting connect or read timeouts. If an external server hangs, the calling async task will block indefinitely, potentially exhausting the Tokio thread pool.
+- Files: `crates/tools/src/remote_trigger.rs:71`, `crates/core/src/team_memory_sync.rs:140,294`, `crates/tools/src/web_search.rs:81,141`, `crates/core/src/oauth_config.rs:228`, `crates/core/src/remote_session.rs:63,87`, `crates/core/src/device_code.rs:28,57`
+- Current mitigation: Some callers set timeouts (`crates/core/src/update_check.rs:65`, `crates/core/src/remote_settings.rs:111` use `.builder()`). No consistent policy.
+- Recommendations: Create a shared `build_http_client(timeout: Duration) -> reqwest::Client` helper and use it everywhere. Enforce a maximum timeout (e.g., 30 s connect / 60 s read).
 
-### SQLite `search_sessions` Constructs LIKE Pattern via `format!`
+**`xcap` screen capture dependency at version 0.0.13:**
+- Risk: `xcap = "0.0.13"` is a pre-1.0 crate with no stability guarantees. Screen capture APIs have platform-level permissions implications (macOS screen recording permission, Wayland restrictions). The version `0.0.13` may have unpatched CVEs or capability-escalation bugs.
+- Files: `Cargo.toml:74`
+- Current mitigation: ComputerUse feature is gated behind `#[cfg(feature = "computer-use")]`, so it is not compiled by default.
+- Recommendations: Pin to a specific patch version in the lockfile (already locked via `Cargo.lock`). Monitor for security advisories on this crate.
 
-**Risk:** `crates/core/src/sqlite_storage.rs:125` builds a LIKE pattern with `format!("%{}%", query)` where `query` comes from user input. While the pattern is passed as a parameter (not interpolated into SQL), `%` and `_` wildcards inside `query` are not escaped. A user searching for `%` will match all sessions — an unintended behavior.
-**Files:** `crates/core/src/sqlite_storage.rs:125`
-**Fix approach:** Escape `%`, `_`, and `\` in the query string before wrapping it in `%`.
+**`MCP client backend` panics when accessed before connection:**
+- Risk: `crates/mcp/src/lib.rs:734` calls `.expect("MCP client backend missing")` on a public method `subscribe_to_notifications`. If a caller invokes this before the MCP client has completed its handshake, the process crashes rather than returning an error.
+- Files: `crates/mcp/src/lib.rs:733-736`
+- Current mitigation: None — the caller is responsible for sequencing.
+- Recommendations: Return `Result<..., McpError>` with a `NotConnected` variant instead of panicking.
 
-### Plugin Hook Execution Uses Shell (`sh -c`) with Unsanitized Input
+## Performance Bottlenecks
 
-**Issue:** `crates/plugins/src/hooks.rs:166, 300` spawns plugin hooks via `Command::new("sh").arg("-c").arg(hook_command)`. If `hook_command` is constructed from user-controlled config values, this is a shell injection vector.
-**Files:** `crates/plugins/src/hooks.rs:166`, `crates/plugins/src/hooks.rs:300`
-**Fix approach:** Verify that `hook_command` originates solely from the static plugin manifest (not from runtime user input). Add a comment documenting the trust boundary. Consider spawning without a shell shell for simple commands.
+**Unbounded `.clone()` on large `Arc<>` message structures:**
+- Problem: 1,491 `.clone()` / `Arc::clone` calls appear across the codebase. Many are clones of `Arc<ToolContext>` or message history vectors passed through async task boundaries. Message history is unbounded and grows with conversation length.
+- Files: Widespread; heaviest in `crates/query/src/lib.rs`, `crates/tui/src/app.rs`, `crates/commands/src/lib.rs`
+- Cause: Shared ownership across async tasks without a clear ownership boundary forces cloning at every hand-off.
+- Improvement path: Audit whether full history clones are needed or whether an index/slice reference suffices. For `ToolContext`, pass `Arc<ToolContext>` directly rather than cloning on each tool dispatch.
 
-### OAuth State / PKCE Not Validated in `oauth_flow.rs`
+**SQLite accessed synchronously via `block_in_place`:**
+- Problem: `crates/commands/src/named_commands.rs:217,246,290,321,358,380,401,411` calls `tokio::task::block_in_place` to run synchronous SQLite operations (`rusqlite`) inside async functions. Each `block_in_place` stalls the current Tokio worker thread.
+- Files: `crates/commands/src/named_commands.rs`
+- Cause: `rusqlite` is synchronous-only; integrating it requires either `block_in_place` or a dedicated blocking thread pool.
+- Improvement path: Move SQLite operations to a dedicated `tokio::task::spawn_blocking` thread pool (a bounded `rayon` or `tokio` blocking pool) rather than stalling worker threads inline.
 
-**Issue:** `crates/cli/src/oauth_flow.rs:234` shows a comment parsing `?code=XXX&state=YYY` from the callback URL, but there is no visible assertion that the returned `state` matches the originally generated state. Missing state validation allows CSRF attacks against the OAuth flow.
-**Files:** `crates/cli/src/oauth_flow.rs`
-**Fix approach:** Confirm that `state` round-trips and is checked before exchanging the code. If already done elsewhere, add a comment citing the location.
+**TUI markdown regex recompiled per render frame:**
+- Problem: `crates/tui/src/messages/markdown.rs:14,20` and `crates/tui/src/messages/markdown_enhanced.rs:14,20` call `Regex::new(...)` inside functions that are invoked on every TUI render cycle.
+- Files: `crates/tui/src/messages/markdown.rs`, `crates/tui/src/messages/markdown_enhanced.rs`
+- Cause: No caching layer; each call to the detection helpers allocates and compiles a new `Regex`.
+- Improvement path: Wrap in `once_cell::sync::Lazy<Regex>` statics. This is a 3-line change per pattern.
 
-### `web_fetch` Fetches Arbitrary URLs Without SSRF Protection
+## Fragile Areas
 
-**Issue:** The `WebFetch` tool (`crates/tools/src/web_fetch.rs`) accepts any URL from the AI without checking whether it is a private/loopback/link-local address. An adversarial model response could instruct it to probe internal services (`http://169.254.169.254/`, `http://localhost:8080/`, etc.).
-**Files:** `crates/tools/src/web_fetch.rs:327`
-**Fix approach:** Resolve the hostname before connecting and reject RFC 1918, loopback, link-local, and APIPA ranges.
+**`team_tool` / `AGENT_RUNNER` global singleton:**
+- Files: `crates/tools/src/team_tool.rs:60-68`
+- Why fragile: `register_agent_runner` must be called exactly once at startup. Calling it twice panics. Never calling it causes `TeamCreateTool` to return a stub result silently — the error is not surfaced to the user as an error, just a placeholder string.
+- Safe modification: Any refactor of the startup sequence in `crates/cli/src/main.rs` or `crates/query/src/lib.rs` must preserve the single registration call.
+- Test coverage: No test for the "runner not registered" silent-failure path.
+
+**`coordinator.rs` environment variable mode flag:**
+- Files: `crates/query/src/coordinator.rs:195-215`
+- Why fragile: Coordinator mode is signalled via `std::env::set_var` and read via `std::env::var`. Any child process that inherits the environment will also appear to be in coordinator mode. Tests that run in parallel and mutate this variable race against each other.
+- Safe modification: Always hold `ENV_LOCK` (the `Mutex<()>` defined in the test module) when setting or reading this variable in tests. Production code relies on a comment-level guarantee about spawn ordering.
+- Test coverage: Tests use `ENV_LOCK` correctly, but the guarantee is unenforced in production code.
+
+**`rmcp_backend` mutex poison chain:**
+- Files: `crates/mcp/src/rmcp_backend.rs`
+- Why fragile: 10+ `.expect("... mutex poisoned")` calls create a cascade: one panicking background task poisons all mutexes, making every subsequent MCP operation panic. The MCP subsystem becomes permanently non-functional until the process restarts.
+- Safe modification: Replace `.expect()` with `.unwrap_or_else(|p| p.into_inner())` throughout.
+- Test coverage: No test exercises mutex-poison recovery.
+
+**`system_prompt` dynamic boundary assumption:**
+- Files: `crates/core/src/system_prompt.rs:572`
+- Why fragile: `build_system_prompt` always embeds the boundary marker, but any custom `--append-system-prompt` or test override that replaces the whole prompt bypasses that guarantee.
+- Safe modification: Replace `.unwrap()` with `ok_or_else(...)` and propagate an error, or make the boundary marker insertion mandatory by changing the type.
+- Test coverage: Tests use `default_opts()` which always produces a prompt with the boundary; no adversarial test.
+
+## Scaling Limits
+
+**Unbounded in-memory task registry:**
+- Current capacity: The `TASK_STORE` global (`crates/tools/src/tasks.rs:112`) is a `DashMap<String, Task>` with no eviction policy.
+- Limit: Grows without bound over the process lifetime; long-running sessions with many background tasks will accumulate entries indefinitely.
+- Scaling path: Add a configurable max-size or TTL-based eviction. Completed tasks should be pruned after a retention window.
+
+**In-memory REPL session registry:**
+- Current capacity: `REPL_SESSIONS` (`crates/tools/src/repl_tool.rs:44`) is a `DashMap` with no limit.
+- Limit: Each REPL session holds an open subprocess handle. Many sessions left open will exhaust file descriptors.
+- Scaling path: Add a session idle timeout and cleanup mechanism.
+
+## Dependencies at Risk
+
+**`xcap = "0.0.13"` — pre-alpha screen capture:**
+- Risk: Version `0.0.13` signals an experimental crate with no stability contract. API breaking changes or yanks are likely. macOS screen recording permission behaviour can change across OS updates.
+- Impact: `crates/tools/src/computer_use.rs` will fail to compile if the crate is yanked or its API changes.
+- Migration plan: Consider replacing with a more mature alternative or vendoring the specific version if computer-use is a required feature.
+
+**`schemars = "0.8"` while 0.9+ exists with breaking changes:**
+- Risk: `schemars` 0.9 has breaking schema generation changes. Pinned at `0.8` means the project will lag behind and face a forced migration eventually.
+- Impact: Tool JSON schemas generated via `schemars::schema_for!` are used in API calls to Anthropic — schema format differences could cause API validation failures on upgrade.
+- Migration plan: Upgrade to `schemars 0.9` in a dedicated PR; audit all `JsonSchema` derive usages and schema output.
+
+## Missing Critical Features
+
+**No supply-chain security tooling:**
+- Problem: No `cargo-deny` config (`deny.toml`) and no `cargo-audit` config (`audit.toml`) are present. The workspace has 12 crates and a large transitive dependency tree.
+- Blocks: Cannot detect known CVEs in dependencies automatically. Any CI pipeline added later will need to retrofit this.
+
+**No test coverage measurement:**
+- Problem: No `cargo-tarpaulin` or `llvm-cov` configuration exists. Test coverage is unknown. 85 out of ~205 non-lib source files have no `#[test]` functions at all (41%).
+- Blocks: Cannot enforce coverage requirements or identify regressions in coverage.
+
+## Test Coverage Gaps
+
+**`crates/bridge/` — zero unit tests:**
+- What's not tested: The HTTP bridge polling loop, session registration/deregistration, event batching, and reconnection logic in `crates/bridge/src/lib.rs` (1,713 lines).
+- Files: `crates/bridge/src/lib.rs`
+- Risk: Reconnection and event-ordering bugs are invisible until production load.
+- Priority: High
+
+**`crates/query/src/lib.rs` — only 5 integration-style tests at the bottom:**
+- What's not tested: Core query loop logic, token budget enforcement, tool dispatch orchestration, streaming response handling — all in the 2,410-line `run_query_loop` function.
+- Files: `crates/query/src/lib.rs`
+- Risk: The most critical runtime path has the fewest tests.
+- Priority: High
+
+**`crates/tools/src/computer_use.rs` — feature-gated tests only:**
+- What's not tested: All `#[cfg(feature = "computer-use")]` action dispatch paths (mouse, keyboard, screenshot) have no tests that run in the default build.
+- Files: `crates/tools/src/computer_use.rs`
+- Risk: Computer-use builds can ship with broken action handlers undetected.
+- Priority: Medium
+
+**`crates/acp/` — entire crate has no visible tests:**
+- What's not tested: The ACP (Agent Communication Protocol) crate at `crates/acp/` is listed as a workspace member but has no test files discoverable.
+- Files: `crates/acp/`
+- Risk: Protocol-level bugs in agent-to-agent communication are undetected.
+- Priority: Medium
 
 ---
 
-## Performance Notes
-
-### Excessive `.clone()` Calls in Hot Paths
-
-**Issue:** `crates/commands/src/lib.rs` contains 134 `.clone()` calls and `crates/tui/src/app.rs` contains 68. Many clone large `Vec<Message>` or `String` values on each UI render tick or command dispatch.
-**Impact:** Increased allocator pressure; measurable latency in long sessions with many messages.
-**Fix approach:** Audit clone sites in render and dispatch paths. Prefer `Arc<T>` for shared read-only data; pass `&T` references where ownership transfer is not required.
-
-### New `reqwest::Client` Created Per `web_fetch` Call
-
-**Issue:** `crates/tools/src/web_fetch.rs:317-320` constructs a fresh `reqwest::Client` on every invocation of `WebFetchTool::execute`. `reqwest::Client` maintains a connection pool; creating a new one per call discards all pooled connections.
-**Files:** `crates/tools/src/web_fetch.rs:317`
-**Fix approach:** Store a `reqwest::Client` as a lazily-initialized static (e.g., `once_cell::sync::Lazy`) or inject it via `ToolContext`.
-
-### Bedrock SigV4 HMAC Computed Without Caching
-
-**Issue:** `crates/api/src/providers/bedrock.rs:213-240` recomputes the SigV4 signing key (4 chained HMAC-SHA256 operations) on every request. The signing key is derived from the date and region, which change at most once per day.
-**Files:** `crates/api/src/providers/bedrock.rs:205-245`
-**Fix approach:** Cache the signing key (keyed on `date + region + secret`) with a 24-hour TTL.
-
-### `SqliteSessionStore` Uses a Non-Shared Connection
-
-**Issue:** `crates/core/src/sqlite_storage.rs` wraps a single `rusqlite::Connection`. If multiple tasks access the store concurrently (possible given Tokio's multi-threaded executor), the `Arc`-less connection will serialize all access and may create lock contention. SQLite in WAL mode with a connection pool would be more scalable.
-**Files:** `crates/core/src/sqlite_storage.rs:11`
-
----
-
-## Incomplete Features
-
-### `settings_sync.rs` — Multiple `#[allow(dead_code)]` Fields on Wire Types
-
-**Issue:** `UserSyncData`, `UploadResponse` in `crates/core/src/settings_sync.rs:66-86` suppress dead-code warnings on `user_id`, `version`, `last_modified`, `checksum` fields. These are deserialized from the API but never read. This suggests the sync feature is partially implemented — the ETag/version-based conflict detection is not yet used.
-**Files:** `crates/core/src/settings_sync.rs:66-86`
-
-### Voice Feature Only Partially Wired
-
-**Issue:** `crates/core/src/voice.rs` and `crates/tui/src/voice_capture.rs` gate real audio capture behind `#[cfg(feature = "voice")]`. The feature is not in the `default` feature set and is not listed as enabled in the production `cli` Cargo.toml, meaning voice input is always a no-op in shipped binaries. Tests in `voice.rs` that mutate env vars also run in the default test suite despite the feature being off.
-**Files:** `crates/core/src/voice.rs`, `crates/tui/src/voice_capture.rs`
-
-### `DEFAULT_MAX_RETRIES` Defined but Never Used in `settings_sync.rs`
-
-**Issue:** `crates/core/src/settings_sync.rs:30` defines `const DEFAULT_MAX_RETRIES: u32 = 3` marked `#[allow(dead_code)]`. The actual retry loop uses a hardcoded `3` at the call site. The constant is vestigial.
-**Files:** `crates/core/src/settings_sync.rs:30`
-
-### `computer_use.rs` — Three Enums Entirely Suppressed as Dead Code
-
-**Issue:** `crates/tools/src/computer_use.rs:49-53` has three consecutive `#[allow(dead_code)]` attributes on enum variants. The computer-use feature appears incomplete — structs are defined but only used in `#[cfg(feature = "computer-use")]` blocks that are not enabled in default or `dev_full` builds.
-**Files:** `crates/tools/src/computer_use.rs:49-53`
-
-### `team_memory_sync.rs` — 412 Conflict Response Not Retried
-
-**Issue:** `crates/core/src/team_memory_sync.rs:336` detects an ETag mismatch (HTTP 412) and returns `anyhow::bail!("... retry needed")` but the caller never retries. The sync will silently fail until the next session start.
-**Files:** `crates/core/src/team_memory_sync.rs:336`
-
----
-
-## Recommendations
-
-1. **Restrict `~/.claurst/auth.json` permissions to 0o600** immediately — this is a low-effort, high-impact security fix. (`crates/core/src/auth_store.rs`)
-
-2. **Audit and fix `std::env::set_var` in async test code** before upgrading to Rust editions/toolchains that make this undefined behavior stricter. Use `serial_test` or `#[serial]` for tests that mutate process-global state.
-
-3. **Add a byte cap before `resp.text().await` in `web_fetch`** to prevent OOM from unbounded HTTP responses. (`crates/tools/src/web_fetch.rs:351`)
-
-4. **Replace `panic!` in `match` arms with `Result` returns** in non-test code, starting with `crates/core/src/lib.rs`, `crates/api/src/providers/message_normalization.rs`, and `crates/query/src/lib.rs`.
-
-5. **Add integration tests for all provider adapters** using mock HTTP servers. The zero-coverage provider files represent the largest regression risk surface.
-
-6. **Split `crates/commands/src/lib.rs` (8,576 lines) and `crates/tui/src/app.rs` (5,918 lines)** into smaller modules — this is the most important maintainability improvement.
-
-7. **Standardize on `parking_lot::Mutex`** to eliminate mutex poisoning as a failure mode.
-
-8. **Escape LIKE wildcards in `search_sessions`** to prevent unexpected behavior with user-supplied search terms.
-
-9. **Add SSRF protection to `WebFetchTool`** by blocking loopback, RFC 1918, and link-local destinations before making the outbound request.
-
-10. **Reuse `reqwest::Client` in `web_fetch`** via a process-level singleton to benefit from connection pooling.
-
----
-
-*Concerns audit: 2026-05-04*
+*Concerns audit: 2026-05-05*

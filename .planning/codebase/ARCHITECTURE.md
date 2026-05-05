@@ -1,262 +1,283 @@
-<!-- refreshed: 2026-05-04 -->
+<!-- refreshed: 2026-05-05 -->
 # Architecture
 
-**Analysis Date:** 2026-05-04
+**Analysis Date:** 2026-05-05
 
 ## System Overview
 
 ```text
-┌──────────────────────────────────────────────────────────────────────┐
-│                        claurst (bin)                                  │
-│                    crates/cli/src/main.rs                             │
-│   Parses CLI args (clap) · loads Config · sets up tracing            │
-│   Chooses: TUI REPL mode  ─OR─  headless print mode  ─OR─  ACP mode │
-└──────────┬────────────────────────────┬─────────────────┬────────────┘
-           │                            │                  │
-           ▼                            ▼                  ▼
-┌──────────────────┐  ┌────────────────────────┐  ┌──────────────────┐
-│  claurst-tui     │  │  claurst-query          │  │  claurst-acp     │
-│  crates/tui/     │  │  crates/query/          │  │  crates/acp/     │
-│  ratatui UI      │  │  Agentic query loop     │  │  JSON-RPC 2.0    │
-│  Event loop      │◄─┤  Streaming, tool-use    │  │  over stdio      │
-│  Slash commands  │  │  Auto-compact           │  │  (editor integr) │
-└──────────────────┘  └──────────┬──────────────┘  └──────────────────┘
-                                  │
-                    ┌─────────────┼─────────────┐
-                    │             │              │
-                    ▼             ▼              ▼
-          ┌──────────────┐ ┌──────────┐ ┌────────────────┐
-          │ claurst-api  │ │claurst-  │ │ claurst-mcp    │
-          │ crates/api/  │ │tools     │ │ crates/mcp/    │
-          │ LLM providers│ │crates/   │ │ MCP client     │
-          │ Anthropic,   │ │tools/    │ │ stdio+HTTP/SSE │
-          │ OpenAI, GCP, │ │File,Bash,│ │ JSON-RPC 2.0   │
-          │ Bedrock, etc.│ │Web, Agent│ └────────────────┘
-          └──────────────┘ └──────────┘
-                    │
-                    ▼
-          ┌──────────────────────────────────────────────────┐
-          │                  claurst-core                     │
-          │                  crates/core/                     │
-          │  Types · Config · Auth · Permissions · Sessions   │
-          │  History · Snapshots · Feature flags · Skills     │
-          └──────────────────────────────────────────────────┘
-                    │
-       ┌────────────┴──────────────┐
-       │                           │
-       ▼                           ▼
-┌─────────────────┐    ┌──────────────────────────────┐
-│ claurst-buddy   │    │  claurst-plugins              │
-│ crates/buddy/   │    │  crates/plugins/              │
-│ Companion system│    │  Plugin discovery, hooks,     │
-│ (Tamagotchi)    │    │  marketplace, capability guard│
-└─────────────────┘    └──────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                  crates/cli  (binary: claurst)                       │
+│           Entry point, arg parsing (clap), mode selection            │
+└──────┬──────────────────────┬────────────────────────────┬───────────┘
+       │ headless/print        │ interactive TUI             │ ACP stdio
+       ▼                       ▼                            ▼
+┌────────────┐     ┌──────────────────────┐     ┌─────────────────────┐
+│  query     │◄────│   tui  (ratatui)     │     │   acp               │
+│  loop      │     │  App state, render,  │     │  JSON-RPC 2.0 over  │
+│ crates/    │     │  event loop          │     │  stdio for editors   │
+│ query      │     │  crates/tui          │     │  crates/acp         │
+└──────┬─────┘     └──────────────────────┘     └─────────────────────┘
        │
-       ▼
-┌──────────────────────────┐
-│  claurst-bridge          │
-│  crates/bridge/          │
-│  claude.ai remote control│
-│  Long-poll, JWT, events  │
-└──────────────────────────┘
+       ├─────────────────────────────────────┐
+       ▼                                     ▼
+┌────────────────┐                  ┌─────────────────────┐
+│  api           │                  │  tools              │
+│  LLM provider  │                  │  Tool impls: bash,  │
+│  abstraction   │                  │  file_read/write,   │
+│  + streaming   │                  │  web, computer_use  │
+│  crates/api    │                  │  crates/tools       │
+└───────┬────────┘                  └─────────────────────┘
+        │ provider adapters
+        │ (anthropic, openai, google,
+        │  azure, bedrock, cohere, copilot,
+        │  codex, minimax, openai-compat)
+        ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       crates/core                                    │
+│  Types, Config, Settings, Auth, Session storage (JSONL + SQLite),   │
+│  Permissions, Attachments, Feature flags, Context building           │
+└───────────────────────────────┬─────────────────────────────────────┘
+                                │ shared by all crates
+            ┌───────────────────┼──────────────────┐
+            ▼                   ▼                  ▼
+    ┌──────────────┐  ┌──────────────────┐  ┌─────────────────┐
+    │  mcp         │  │  plugins         │  │  bridge         │
+    │  MCP client  │  │  Plugin runtime  │  │  Remote bridge  │
+    │  (rmcp SDK)  │  │  hooks, manifest │  │  to claude.ai   │
+    │  crates/mcp  │  │  crates/plugins  │  │  crates/bridge  │
+    └──────────────┘  └──────────────────┘  └─────────────────┘
+
+    ┌──────────────┐  ┌──────────────────┐
+    │  buddy       │  │  commands        │
+    │  Companion   │  │  Slash commands  │
+    │  system      │  │  (/help, /model, │
+    │  crates/     │  │   /compact, …)   │
+    │  buddy       │  │  crates/commands │
+    └──────────────┘  └──────────────────┘
 ```
 
 ## Component Responsibilities
 
-| Component | Responsibility | Key Files |
-|-----------|----------------|-----------|
-| `claurst-cli` | Binary entry point, CLI arg parsing, mode routing | `crates/cli/src/main.rs` |
-| `claurst-core` | Shared types, config, auth, permissions, session storage | `crates/core/src/lib.rs` |
-| `claurst-api` | LLM provider abstraction, streaming SSE, multi-provider adapters | `crates/api/src/lib.rs` |
-| `claurst-query` | Agentic conversation loop, tool dispatch, auto-compact, coordinator | `crates/query/src/lib.rs` |
-| `claurst-tools` | All tool implementations (Bash, file I/O, web, agent, etc.) | `crates/tools/src/lib.rs` |
-| `claurst-tui` | ratatui terminal UI, event loop, dialogs, overlays | `crates/tui/src/app.rs` |
-| `claurst-mcp` | MCP JSON-RPC client, tool/resource discovery, connection manager | `crates/mcp/src/lib.rs` |
-| `claurst-commands` | Slash command framework (`/compact`, `/model`, `/cost`, etc.) | `crates/commands/src/lib.rs` |
-| `claurst-plugins` | Plugin loader, hook registry, marketplace, capability enforcement | `crates/plugins/src/lib.rs` |
-| `claurst-bridge` | claude.ai web remote-control bridge (long-poll, JWT, events) | `crates/bridge/src/lib.rs` |
-| `claurst-acp` | Agent Client Protocol server (JSON-RPC 2.0 over stdio for editors) | `crates/acp/src/lib.rs` |
-| `claurst-buddy` | Companion/Tamagotchi system, deterministic PRNG-based traits | `crates/buddy/src/lib.rs` |
+| Component | Responsibility | Path |
+|-----------|----------------|------|
+| `claurst` (cli) | Binary entry point, CLI arg parsing, mode dispatch | `crates/cli/src/main.rs` |
+| `claurst-core` | Shared types, config, permissions, session storage, auth | `crates/core/src/` |
+| `claurst-api` | LLM provider abstraction, HTTP streaming, model registry | `crates/api/src/` |
+| `claurst-query` | Agentic query loop, tool dispatch, compaction, agent orchestration | `crates/query/src/` |
+| `claurst-tools` | All tool implementations (bash, file, web, MCP wrappers, etc.) | `crates/tools/src/` |
+| `claurst-tui` | Ratatui TUI: app state, event loop, rendering, dialogs | `crates/tui/src/` |
+| `claurst-commands` | Slash command framework and all `/cmd` implementations | `crates/commands/src/` |
+| `claurst-mcp` | MCP protocol client: tool discovery, execution, OAuth, connection mgr | `crates/mcp/src/` |
+| `claurst-bridge` | Remote bridge connecting local CLI to claude.ai web UI | `crates/bridge/src/` |
+| `claurst-plugins` | Plugin runtime: discovery, manifest parsing, hook registry, marketplace | `crates/plugins/src/` |
+| `claurst-acp` | Agent Client Protocol server: JSON-RPC 2.0 over stdio for editors | `crates/acp/src/lib.rs` |
+| `claurst-buddy` | Companion/Tamagotchi system with deterministic species derivation | `crates/buddy/src/lib.rs` |
 
-## Architectural Pattern
+## Pattern Overview
 
-**Overall:** Layered hexagonal architecture with a feature-flag-heavy core.
+**Overall:** Layered Cargo workspace — shared core, specialized protocol crates, thin binary.
 
 **Key Characteristics:**
-- `claurst-core` is a dependency-free foundation depended on by every other crate.
-- `claurst-api` implements a provider abstraction behind `LlmProvider` trait, enabling multi-LLM support without changing upper layers.
-- `claurst-query` owns the agentic loop: send → stream → detect tool-use → dispatch → feed back. It emits `QueryEvent`s over `mpsc::UnboundedSender` so the TUI can render progress without polling.
-- Tools are dispatched via the `Tool` trait (`crates/tools/src/lib.rs:456`). MCP tools are wrapped in `McpToolWrapper` at the CLI layer to appear as native tools.
-- Feature gating is pervasive: `claurst-core` has 36+ Cargo features (e.g. `voice`, `ultraplan`, `bridge_mode`). TUI passes them through via feature re-exports.
-- `parking_lot::Mutex`/`RwLock` are used throughout instead of `std::sync` for better performance. `DashMap` is used for lock-free concurrent maps.
-- All async work runs on a single tokio runtime (via `#[tokio::main]` in `crates/cli/src/main.rs`).
+- `claurst-core` is the only crate with no workspace-crate dependencies; all others depend on it.
+- `claurst-query` is the orchestration heart: it drives the agentic tool-use loop and coordinates API, tools, MCP, and compaction.
+- `claurst-tui` owns the interactive user-facing event loop and dispatches to `claurst-query` for each conversation turn.
+- The binary (`crates/cli`) wires everything together, but contains minimal logic itself.
+- Async-first: Tokio runtime (`#[tokio::main]`) runs throughout; blocking operations are offloaded.
 
-## Crate Dependency Graph
+## Layers
 
-```
-claurst (bin)
-  ├── claurst-core        (no workspace-crate deps)
-  ├── claurst-api         → claurst-core
-  ├── claurst-mcp         → claurst-core
-  ├── claurst-tools       → claurst-core, claurst-api, claurst-mcp
-  ├── claurst-plugins     → claurst-core
-  ├── claurst-query       → claurst-core, claurst-api, claurst-tools, claurst-plugins
-  ├── claurst-tui         → claurst-core, claurst-api, claurst-tools, claurst-query, claurst-mcp
-  ├── claurst-commands    → claurst-core, claurst-api, claurst-tools, claurst-query,
-  │                         claurst-mcp, claurst-tui, claurst-plugins, claurst-bridge
-  ├── claurst-bridge      → claurst-core, claurst-api, claurst-query
-  ├── claurst-acp         → claurst-core, claurst-api
-  ├── claurst-buddy       → claurst-core
-  └── claurst-plugins     → claurst-core
-```
+**Core / Foundation (`claurst-core`):**
+- Purpose: Shared primitives — zero workspace-crate dependencies
+- Location: `crates/core/src/`
+- Contains: Types, Config/Settings, AuthStore, PermissionManager, session storage (JSONL + SQLite), context building, feature flags, snapshot/undo, skill discovery
+- Depends on: External crates only (tokio, serde, rusqlite, reqwest, etc.)
+- Used by: Every other crate in the workspace
 
-`claurst-core` is the only crate with **no** workspace-crate dependencies.
-`claurst-commands` has the broadest fan-in (depends on 8 other crates).
+**API / Provider Layer (`claurst-api`):**
+- Purpose: Unified LLM provider abstraction with streaming
+- Location: `crates/api/src/`
+- Contains: `LlmProvider` trait (`provider.rs`), concrete adapters in `providers/` (anthropic, openai, google, azure, bedrock, cohere, copilot, codex, minimax, openai-compat), model registry, stream parser, message transformers
+- Depends on: `claurst-core`
+- Used by: `claurst-query`, `claurst-tui`, `claurst-bridge`, `claurst-acp`, `claurst-cli`
+
+**Tool Layer (`claurst-tools`):**
+- Purpose: All agent-callable tool implementations
+- Location: `crates/tools/src/`
+- Contains: `Tool` trait + 30+ implementations: `BashTool`, `PtyBashTool`, `FileReadTool`, `FileWriteTool`, `FileEditTool`, `GlobTool`, `GrepTool`, `WebFetchTool`, `WebSearchTool`, `NotebookEditTool`, `ComputerUseTool`, `SkillTool`, `AgentTool`, etc.
+- Depends on: `claurst-core`, `claurst-api`, `claurst-mcp`
+- Used by: `claurst-query`
+
+**Protocol Crates:**
+- `claurst-mcp` — MCP client (JSON-RPC, tool discovery/execution, HTTP+stdio transports, OAuth). Depends only on `claurst-core`. Location: `crates/mcp/src/`
+- `claurst-bridge` — Remote bridge to claude.ai web (long-polling, device fingerprinting, JWT decode). Location: `crates/bridge/src/`
+- `claurst-acp` — JSON-RPC 2.0 stdio server for editor integrations (Zed, VS Code). Location: `crates/acp/src/lib.rs`
+
+**Query / Orchestration Layer (`claurst-query`):**
+- Purpose: The agentic loop — sends messages, dispatches tools, manages context, handles auto-compact
+- Location: `crates/query/src/`
+- Contains: Main query loop (`lib.rs`), coordinator/worker agent mode (`coordinator.rs`), auto-compaction (`compact.rs`), session memory extraction, cron scheduler, managed orchestrator, skill prefetch
+- Depends on: `claurst-core`, `claurst-api`, `claurst-tools`, `claurst-plugins`
+- Used by: `claurst-tui` (interactive), `claurst-cli` (headless)
+
+**UI Layer (`claurst-tui`):**
+- Purpose: Full interactive TUI — app state, event loop, all screens and dialogs
+- Location: `crates/tui/src/`
+- Contains: `App` struct (`app.rs`), render logic (`render.rs`), 40+ view/dialog modules, markdown rendering (`messages/`), voice capture, diff viewer, session browser
+- Depends on: `claurst-core`, `claurst-api`, `claurst-tools`, `claurst-query`, `claurst-mcp`
+- Used by: `claurst-cli` (in interactive mode)
+
+**Command Layer (`claurst-commands`):**
+- Purpose: Slash command framework and all `/cmd` implementations
+- Location: `crates/commands/src/`
+- Contains: `SlashCommand` trait, `CommandContext`, `CommandResult`, named command dispatch
+- Depends on: All other crates except `claurst-buddy` and `claurst-acp`
+- Used by: `claurst-cli`, `claurst-tui`
+
+**Auxiliary Crates:**
+- `claurst-plugins` — Plugin runtime with capability enforcement, marketplace, hooks (`crates/plugins/src/`)
+- `claurst-buddy` — Companion system with deterministic species derivation from user-id via Mulberry32 PRNG (`crates/buddy/src/lib.rs`)
 
 ## Data Flow
 
-### Primary Interactive Request Path
+### Interactive Mode (TUI)
 
-1. User types input → `crates/tui/src/prompt_input.rs` captures keystroke via crossterm
-2. `crates/tui/src/app.rs` dispatches to `run_query_loop()` in `crates/query/src/lib.rs:699`
-3. Query loop builds `CreateMessageRequest` → `crates/api/src/lib.rs` selects provider via `ProviderRegistry`
-4. Provider (e.g. `AnthropicProvider` at `crates/api/src/providers/anthropic.rs`) streams SSE events
-5. Query loop accumulates stream, emits `QueryEvent::Stream` → TUI renders incrementally
-6. On `tool_use` content block: `QueryEvent::ToolStart` → dispatches to `Tool::execute()` in `crates/tools/`
-7. `QueryEvent::ToolEnd` with result → query loop feeds result back as next user message
-8. On `end_turn` stop reason: `QueryEvent::TurnComplete` → TUI finalizes render
+1. `#[tokio::main]` in `crates/cli/src/main.rs` — parses args with `clap`, loads `Settings::load_hierarchical()`
+2. Auth resolution (`config.resolve_anthropic_auth_async()`) and provider selection
+3. MCP servers initialized via `claurst-mcp::McpManager`
+4. Tool list assembled — native tools + MCP wrappers (`McpToolWrapper` in `main.rs`)
+5. `claurst_tui::run_interactive()` enters the `ratatui` event loop (`crates/tui/src/app.rs`)
+6. User input → `crossterm` events → `App::handle_event()` → `CommandQueue` or direct `query_loop_tx`
+7. `claurst_query::run_query_loop()` drives model turns: sends `CreateMessageRequest` → streams `AnthropicStreamEvent`
+8. Tool-use blocks detected → `ToolDispatcher::dispatch()` → concrete `Tool::execute()` → result appended
+9. `QueryEvent` channel streams events back to `App` → `render::render()` redraws terminal
 
-### Headless (--print) Path
+### Headless / Print Mode (`-p` flag)
 
-1. `crates/cli/src/main.rs` calls `run_query_loop()` directly with `event_tx = None`
-2. Output is accumulated and printed to stdout when `QueryOutcome::EndTurn` arrives
+1. Same startup as interactive up through step 4
+2. `claurst_query::run_query_loop_headless()` — no TUI, outputs directly to stdout
+3. Supports `--output-format text|json|stream-json`
+4. Exits after `QueryOutcome::EndTurn` or error
 
-### ACP (Editor Integration) Path
+### ACP Server Mode (`claude acp`)
 
-1. `crates/acp/src/lib.rs` reads newline-delimited JSON-RPC 2.0 from stdin
-2. Dispatches to session creation, tool listing, model listing
-3. Returns responses as newline-delimited JSON to stdout
+1. `main.rs` fast-path intercepts `acp` subcommand before `Cli::parse()`
+2. `claurst_acp::run_acp_server()` reads newline-delimited JSON-RPC from stdin
+3. Responds to `initialize`, `session/create`, `session/message`, `tool/list`, `model/list`
+4. Designed for editor integrations (Zed, VS Code) without launching a TUI
 
-### MCP Tool Invocation Path
+### Agent / Coordinator Mode
 
-1. `McpToolWrapper` (in `crates/cli/src/main.rs:54`) wraps MCP tools as `Tool` implementations
-2. `Tool::execute()` calls `McpManager::call_tool()` in `crates/mcp/`
-3. MCP manager routes over stdio subprocess or HTTP/SSE transport
-
-### Plugin Hook Path
-
-1. Plugin hooks registered via `GLOBAL_HOOK_REGISTRY` at startup (`crates/plugins/src/lib.rs:76`)
-2. Post-model-turn hooks fired in `fire_post_sampling_hooks()` (`crates/query/src/lib.rs:490`)
-3. Hook stderr/stdout injected as user messages for the model to react to
-
-### Auto-compact Path
-
-1. Query loop checks token usage via `should_auto_compact()` (`crates/query/src/compact.rs`)
-2. When context ≥ threshold, `compact_conversation()` is called — sends a compaction prompt
-3. Compacted summary replaces prior history; loop continues
+1. `CLAURST_COORDINATOR_MODE` env var activates coordinator mode (`crates/query/src/coordinator.rs`)
+2. Coordinator uses `AgentTool` to spawn parallel worker sub-agents
+3. Workers receive fully self-contained prompts; coordinator uses `SendMessageTool` for ongoing communication
+4. `TasksOverlay` in TUI displays live worker status
 
 **State Management:**
-- `Config` and `Settings` are immutable snapshots per-session; config changes trigger a full reload.
-- `CostTracker` is `Arc`-wrapped and shared between query loop, TUI, and tools.
-- Shell state (cwd, env vars) is tracked per session in `SHELL_STATE_REGISTRY` (`DashMap<session_id, Arc<Mutex<ShellState>>>`).
-- Snapshot/undo state is in `SNAPSHOT_REGISTRY` (same pattern).
-- MCP connection state is managed in `McpConnectionManager` (`crates/mcp/src/connection_manager.rs`).
+- All shared mutable state uses `Arc<parking_lot::Mutex<T>>` or `Arc<dashmap::DashMap<K,V>>`
+- `CommandQueue` (`Arc`-backed) bridges TUI input thread and query loop
+- Session history stored in SQLite (`SqliteSessionStore`) or JSONL fallback
+- No global mutable state at module level in the hot path (config passed by value/clone)
 
 ## Key Abstractions
 
-**`LlmProvider` trait** (`crates/api/src/provider.rs:48`):
-- Implemented by: `AnthropicProvider`, `OpenAiProvider`, `GoogleProvider`, `BedrockProvider`, `AzureProvider`, `CopilotProvider`, `CodexProvider`, `CohereProvider`, `MinimaxProvider`, and 30+ `openai_compat` providers
-- Methods: `create_message()`, `create_message_stream()`, `list_models()`, `check_health()`
-- Registry: `ProviderRegistry` in `crates/api/src/registry.rs`
+**`LlmProvider` trait:**
+- Purpose: Uniform interface for all LLM backends
+- Location: `crates/api/src/provider.rs`
+- Pattern: `async_trait` with `create_message()`, `create_message_stream()`, `list_models()`, `check_health()`
 
-**`Tool` trait** (`crates/tools/src/lib.rs:456`):
-```rust
-#[async_trait]
-pub trait Tool: Send + Sync {
-    fn name(&self) -> &str;
-    fn description(&self) -> &str;
-    fn permission_level(&self) -> PermissionLevel;
-    fn input_schema(&self) -> Value;
-    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult;
-}
-```
-- ~35 built-in tool implementations in `crates/tools/src/`
-- MCP tools wrapped via `McpToolWrapper` at runtime
+**`Tool` trait:**
+- Purpose: Uniform interface for all agent-callable tools
+- Location: `crates/tools/src/lib.rs`
+- Pattern: `async_trait` with `name()`, `description()`, `permission_level()`, `input_schema()`, `execute()`
 
-**`ContentBlock` enum** (`crates/core/src/lib.rs:193`):
-- Tagged union covering: `Text`, `Image`, `Document`, `ToolUse`, `ToolResult`, `Thinking`, `RedactedThinking`, plus UI-only variants (`UserLocalCommandOutput`, `UserCommand`, `UserMemoryInput`, `SystemAPIError`, `CollapsedReadSearch`, `TaskAssignment`)
+**`SlashCommand` trait:**
+- Purpose: Uniform interface for all `/cmd` implementations
+- Location: `crates/commands/src/lib.rs`
+- Pattern: Synchronous `execute()` returning `CommandResult` enum
 
-**`Message` struct** (`crates/core/src/lib.rs:308`):
-- `role: Role`, `content: MessageContent` (text or blocks), `uuid`, `cost`
+**`McpToolWrapper` struct:**
+- Purpose: Makes remote MCP server tools appear as native `Tool` implementors
+- Location: `crates/cli/src/main.rs` (inline)
 
-**`QueryEvent` enum** (`crates/query/src/lib.rs:448`):
-- Communication channel from query loop to TUI: `Stream`, `ToolStart`, `ToolEnd`, `TurnComplete`, `Status`, `Error`, `TokenWarning`
+**`QueryConfig` struct:**
+- Purpose: Complete configuration snapshot for one query-loop invocation
+- Location: `crates/query/src/lib.rs`
+- Pattern: Builder-like, constructed from `Config` then overridden with CLI args
 
-**`PermissionHandler` trait** (`crates/core/src/lib.rs:84`):
-- Implementations: `AutoPermissionHandler`, `InteractivePermissionHandler`, `ManagedAutoPermissionHandler`, `ManagedInteractivePermissionHandler`
-
-**`SlashCommand` trait** (`crates/commands/src/lib.rs`):
-- Implemented by all `/` commands; produces `CommandResult` enum variants (e.g. `Message`, `ConfigChange`, `ClearConversation`, `Exit`, `OpenRewindOverlay`)
-
-**`PluginManifest`** (`crates/plugins/src/manifest.rs`):
-- Defines plugin hooks, MCP servers, LSP servers, slash commands
-- Capability enforcement via `check_plugin_capability()` (`crates/plugins/src/lib.rs:44`)
+**`PermissionManager`:**
+- Purpose: Intercepts all tool execution, enforces `PermissionMode` rules, prompts user
+- Location: `crates/core/src/` (exported from `claurst_core`)
+- Modes: `Default`, `AcceptEdits`, `BypassPermissions`, `Plan`
 
 ## Entry Points
 
-**Interactive TUI:**
-- Location: `crates/cli/src/main.rs`
-- Triggers: `claurst` (no `--print` flag)
-- Responsibilities: Init tracing, load config, discover plugins/skills, connect MCP, launch `App::run()` in `crates/tui/src/app.rs`
+**Interactive binary:**
+- Location: `crates/cli/src/main.rs` (`fn main()`)
+- Triggers: `claurst` CLI invocation without `-p` / no prompt arg
+- Responsibilities: Arg parse, settings load, auth, MCP init, tool assembly, TUI launch
 
-**Headless print:**
-- Location: `crates/cli/src/main.rs`
-- Triggers: `claurst --print` / `claurst -p`
-- Responsibilities: Run single query, output to stdout, exit
+**Headless binary:**
+- Location: `crates/cli/src/main.rs` (same `main()`, different branch)
+- Triggers: `claurst -p "prompt"` or stdin pipe
+- Responsibilities: Same init, but calls headless query loop, prints result to stdout
 
 **ACP server:**
-- Location: `crates/acp/src/lib.rs`
-- Triggers: `claurst --acp` (or the `acp_server()` function)
-- Responsibilities: JSON-RPC 2.0 over stdio for editor integration (Zed, VS Code)
+- Location: `crates/acp/src/lib.rs` (`run_acp_server()`)
+- Triggers: `claurst acp` subcommand
+- Responsibilities: JSON-RPC 2.0 stdio server for editor integrations
+
+**Build script:**
+- Location: `crates/cli/build.rs`
+- Triggers: Cargo build
+- Responsibilities: Embeds `BUILD_TIME`, `GIT_COMMIT`, `PACKAGE_URL`, `FEEDBACK_CHANNEL`, `ISSUES_EXPLAINER` as `env!()` constants
 
 ## Architectural Constraints
 
-- **Threading:** Single tokio runtime (multi-thread by default via `tokio = { features = ["full"] }`). No cross-thread blocking allowed on the async executor.
-- **Global state:** `SHELL_STATE_REGISTRY`, `SNAPSHOT_REGISTRY` (both in `crates/tools/src/lib.rs`), `GLOBAL_HOOK_REGISTRY`, and `GLOBAL_PLUGIN_REGISTRY` (both in `crates/plugins/src/lib.rs`) are process-level singletons via `once_cell::sync::Lazy<DashMap<...>>` or `OnceLock`.
-- **Circular imports:** None — crate dependency graph is a strict DAG with `claurst-core` at the root.
-- **Feature propagation:** TUI feature flags are re-exported from `claurst-core` features. The binary must enable the same feature set on both crates to avoid mismatched conditional compilation.
-- **MCP auth:** OAuth flows for MCP servers are dispatched back to the TUI via a callback arc (`mcp_auth_runner` in `CommandContext`), not handled inline.
+- **Threading:** Tokio multi-thread runtime; all tool executions are `async`. `PtyBashTool` uses `portable-pty` on a blocking thread. UI render happens on the main async task.
+- **Global state:** No mutable global singletons in the query hot path. `once_cell::sync::Lazy` used for read-only globals (constants, regex patterns). `parking_lot::Mutex`/`RwLock` for shared write state.
+- **Circular imports:** No circular crate dependencies. Dependency order is strictly: `core` → `api/mcp/plugins` → `tools` → `query` → `tui/commands` → `cli`.
+- **Feature flags:** `claurst-core` defines 36+ Cargo feature flags for experimental capabilities. `claurst-tui` passes them through with `claurst-core/<feature>` delegation. `dev_full` activates all features.
+- **Computer-use:** `claurst-tools` has an optional `computer-use` feature gating `enigo`, `xcap`, and `image` dependencies.
+- **Voice:** Optional `voice` feature (cpal) in `claurst-core` and `claurst-tui`; enabled by default in the CLI binary.
 
 ## Anti-Patterns
 
-### Blocking inside async context
+### Bypassing the permission system
 
-**What happens:** Some tool implementations call `std::process::Command` (synchronous) inside an `async fn`. This appears in `fire_post_sampling_hooks()` (`crates/query/src/lib.rs:490`) and hook execution.
-**Why it's wrong:** Blocks the tokio thread, reducing throughput under concurrent tool calls.
-**Do this instead:** Use `tokio::process::Command` or `tokio::task::spawn_blocking` for subprocess calls. See `crates/tools/src/bash.rs` for the correct PTY-based approach.
+**What happens:** Calling `Tool::execute()` directly without going through `PermissionManager::check_permission()`
+**Why it's wrong:** Skips user confirmation for destructive operations; breaks `--permission-mode plan`
+**Do this instead:** All tool execution must flow through `ToolContext::check_permission()` as shown in `McpToolWrapper::execute()` in `crates/cli/src/main.rs`
 
-### Config passed by value (clone-heavy)
+### Adding logic to the binary crate
 
-**What happens:** `Config` is cloned and passed into `CommandContext`, `QueryConfig::from_config()`, and tool setups on every query.
-**Why it's wrong:** `Config` is large (includes `HashMap` of MCP servers, hooks, agents). Repeated cloning adds allocation pressure.
-**Do this instead:** Wrap `Config` in `Arc<Config>` and clone the `Arc`, not the data. The pattern already appears with `CostTracker` and `PermissionHandler`.
+**What happens:** Placing business logic in `crates/cli/src/main.rs` rather than in a library crate
+**Why it's wrong:** The binary cannot be unit-tested; the `McpToolWrapper` struct already lives there as a necessary exception
+**Do this instead:** Add new functionality to the appropriate library crate (`claurst-core`, `claurst-tools`, etc.) and call it from `main.rs`
+
+### Blocking in async context
+
+**What happens:** Calling `std::fs::read`, `std::process::Command`, or other blocking syscalls directly in an `async fn`
+**Why it's wrong:** Starves the Tokio runtime, causing TUI stutters and query-loop hangs
+**Do this instead:** Use `tokio::fs`, `tokio::process::Command`, or `tokio::task::spawn_blocking` for any blocking work
 
 ## Error Handling
 
-**Strategy:** `anyhow::Result` at call-site boundaries; `ClaudeError` (`thiserror`) for library-facing error types.
+**Strategy:** `anyhow::Result` for application-level errors (propagated with `?`); `thiserror`-derived typed errors for library boundaries (`ClaudeError`, `ProviderError`, `PluginError`).
 
 **Patterns:**
-- `ClaudeError` variants in `crates/core/src/lib.rs:100`: `Api`, `ApiStatus`, `Auth`, `PermissionDenied`, `Tool`, `Io`, `Json`, `Http`, `RateLimit`, `ContextWindowExceeded`, `MaxTokensReached`, `Cancelled`, `Config`, `Mcp`, `Other`
-- `ClaudeError::is_retryable()` and `ClaudeError::is_context_limit()` used by the query loop to decide retry/compact behavior
-- Tool errors are returned as `ToolResult { is_error: true, content: ... }` — they do NOT panic or propagate as `Err`
-- Provider errors use `ProviderError` (`crates/api/src/provider_error.rs`) then converted at query-loop boundary
+- `QueryOutcome::Error(ClaudeError)` — query loop surfaces typed errors to the caller
+- `ToolResult::error(String)` — tool failures are returned as structured error content, not panics
+- Provider-level retries with exponential backoff are handled inside `claurst-api` (rate limits, overloaded responses)
 
 ## Cross-Cutting Concerns
 
-**Logging:** `tracing` crate throughout. `tracing-subscriber` with `env-filter` and optional JSON format configured in `crates/cli/src/main.rs`.
-**Validation:** Input JSON validated against JSON Schema at tool dispatch; provider requests validated per-provider.
-**Authentication:** `AuthStore` in `crates/core/src/auth_store.rs` stores API keys and OAuth tokens. OAuth device-code flow in `crates/core/src/device_code.rs`; OAuth web flow in `crates/cli/src/oauth_flow.rs` and `crates/cli/src/codex_oauth_flow.rs`.
+**Logging:** `tracing` crate with `tracing-subscriber` + `EnvFilter`. Default level `warn`; `--verbose` sets `debug`. JSON log output available. Initialized once in `main.rs`.
+
+**Validation:** Input validation happens at tool boundary via JSON Schema (`schemars`) and `input_schema()` on each `Tool`.
+
+**Authentication:** `AuthStore` in `claurst-core` persists API keys and OAuth tokens. Per-provider auth resolved via `config.resolve_anthropic_auth_async()` and `ProviderRegistry`. MCP OAuth handled separately in `claurst-mcp::oauth`.
 
 ---
 
-*Architecture analysis: 2026-05-04*
+*Architecture analysis: 2026-05-05*
