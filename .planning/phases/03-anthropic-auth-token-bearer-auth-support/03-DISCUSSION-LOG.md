@@ -1,42 +1,103 @@
-# Phase 03: Discussion Log
+# Phase 03: ANTHROPIC_AUTH_TOKEN Bearer Auth Support - Discussion Log
 
-**Phase:** 03-anthropic-auth-token-bearer-auth-support
+> **Audit trail only.** Do not use as input to planning, research, or execution agents.
+> Decisions are captured in CONTEXT.md — this log preserves the alternatives considered.
+
 **Date:** 2026-05-06
-**Source:** UAT session — Phase 02 UAT blocked by auth failure
+**Phase:** 03-anthropic-auth-token-bearer-auth-support
+**Areas discussed:** use_bearer_auth flag semantics, Uncommitted changes strategy, Test coverage scope
 
-## Summary
+---
 
-Phase 03 was triggered by a UAT blocker: the user's proxy server (`http://epsilon.net.tham.one:53080`) requires `Authorization: Bearer` headers but Claurst always sends `x-api-key`. The user has `ANTHROPIC_AUTH_TOKEN` set in `~/.claurst/settings.json` config.env but Claurst never reads it as a credential.
+## use_bearer_auth flag semantics
 
-## Key Findings from Debugging
+### When use_bearer_auth: true + ANTHROPIC_API_KEY both present
 
-### Finding 1: config.env is dead config
-`config.env` in `settings.json` is deserialized and merged in the settings layer but never applied to `std::env`. Any env var set there (including `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`) has no effect at runtime.
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Force Bearer with ANTHROPIC_API_KEY | Use API key as Bearer token — flag changes header format, not token source | |
+| Require ANTHROPIC_AUTH_TOKEN | use_bearer_auth: true means the user wants the AUTH_TOKEN path; API_KEY is still for x-api-key mode | |
+| (Free-text) | Mutual exclusivity — throw an error when both are set | ✓ |
 
-**Fix:** Inject `config.env` into `std::env` at startup in `main.rs`, before auth resolution. Process env wins.
+**User's choice:** There must be no conflict. API_KEY and AUTH_TOKEN are mutually exclusive. Throw an error when there is both, with a message highlighting this.
+**Notes:** User clarified this applies to all conflict combinations, not just the env-var pair.
 
-### Finding 2: ANTHROPIC_AUTH_TOKEN not recognized
-`resolve_anthropic_api_key()` checks `ANTHROPIC_API_KEY` only. `resolve_anthropic_auth_async()` falls through to OAuth token loading if no API key is found — it never checks `ANTHROPIC_AUTH_TOKEN`.
+### What exactly triggers the conflict error
 
-`ANTHROPIC_AUTH_TOKEN` appears only in `import_config.rs` as a migration comment.
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Both env vars set simultaneously | Error when ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are both non-empty in env | |
+| use_bearer_auth: true + ANTHROPIC_API_KEY set | Error only when config flag is explicitly true while API_KEY is also present | |
+| Either combination | Error on: (1) both env vars, (2) use_bearer_auth:true + API_KEY env, (3) use_bearer_auth:true + api_key in config | ✓ |
 
-**Fix:** After `ANTHROPIC_API_KEY` check fails in `resolve_anthropic_auth_async`, check `ANTHROPIC_AUTH_TOKEN` and return `(token, use_bearer_auth=true)`.
+**User's choice:** Either combination, and also api_key is set in settings.json when use_bearer_auth: true. The error is thrown when both conditions (api key and auth token) in all scenarios are met.
 
-### Finding 3: Bearer auth infrastructure already exists
-`ClientConfig.use_bearer_auth` exists. Both `send_with_retry` and `fetch_available_models` already branch on it. The fix is purely upstream — get `use_bearer_auth=true` into `ClientConfig` when the token comes from `ANTHROPIC_AUTH_TOKEN`.
+### Where should conflict error be caught
 
-### Finding 4: Partial fix applied but may not be committed
-During the UAT session, both fixes (config.env injection, ANTHROPIC_AUTH_TOKEN check) were coded directly into the source. Their commit status is uncertain — the planner must verify before re-applying.
+| Option | Description | Selected |
+|--------|-------------|----------|
+| In resolve_anthropic_auth_async | Return Result from the resolver; caller in main.rs handles via ? | ✓ |
+| In main.rs before calling the resolver | Precheck in main.rs; resolver stays simple with no error path | |
 
-### Finding 5: named-command paths have their own ClientConfig construction
-`crates/commands/src/lib.rs` lines ~162 and ~1967 construct `ClientConfig` independently. They may not inherit `use_bearer_auth` from the main startup path. Deferred to a follow-up phase to keep this one focused.
+**User's choice:** In resolve_anthropic_auth_async (Recommended)
 
-## User Requirements (verbatim)
-> "Create a new phase to fully support ANTHROPIC_AUTH_TOKEN at the provider level. There should be a switch logic to on when to use bearer token and when to use x-api-key. There should also be a user defined config in json to decide which to use too."
+---
 
-## Decisions Locked
-- D-01: ANTHROPIC_AUTH_TOKEN → Bearer mode (locked)
-- D-02: config.env injection at startup (locked)
-- D-03: provider_configs.anthropic.use_bearer_auth JSON flag (locked)
-- D-04: existing request-layer bearer branching is sufficient (locked)
-- D-05: regression test required (locked)
+## Uncommitted changes strategy
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Fold into the main plan | Plan modifies these files anyway; treat working tree diffs as starting delta | ✓ |
+| Commit as-is first, then extend | Stage baseline commit, then second commit adds conflict check and ProviderConfig field | |
+| Discard and rewrite cleanly | git restore both files, implement everything fresh | |
+
+**User's choice:** Fold into the main plan (Recommended)
+**Notes:** The ANTHROPIC_AUTH_TOKEN env check in lib.rs will be superseded by the conflict-aware version anyway.
+
+---
+
+## Test coverage scope
+
+### What to test
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| ANTHROPIC_AUTH_TOKEN env path | Happy path: set AUTH_TOKEN, clear API_KEY, assert bearer=true | ✓ |
+| Conflict detection error paths | Three conflict scenarios each returning Err | ✓ |
+| config.env injection | Config env block makes AUTH_TOKEN visible to resolver | ✓ |
+
+**User's choice:** All three selected.
+
+### Where tests live
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Inline in crates/core/src/lib.rs | #[cfg(test)] module at bottom of file | |
+| Separate crates/core/tests/ file | Integration test file | ✓ |
+| You decide | Claude picks based on existing patterns | |
+
+**User's choice:** Separate crates/core/tests/ file
+
+### Env var isolation strategy
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| serial_test crate | Add serial_test as dev-dependency; #[serial] on env-mutating tests | ✓ |
+| No isolation | Accept risk of parallel interference | |
+| You decide | Claude picks safest approach | |
+
+**User's choice:** Reset env vars before each test and add serial_test.
+
+---
+
+## Claude's Discretion
+
+- Exact error type (anyhow::Error with context string vs. dedicated AuthConflictError enum variant)
+- Error message wording
+- Whether to add ANTHROPIC_AUTH_TOKEN to the import_config migration allowlist
+
+## Deferred Ideas
+
+- Bearer support in named-command and ACP paths (crates/commands/src/lib.rs)
+- Bearer mode toggle in onboarding provider setup UI
+- Adding ANTHROPIC_AUTH_TOKEN to api_key_env_vars_for_provider return slice
