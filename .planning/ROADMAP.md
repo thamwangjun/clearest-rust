@@ -9,6 +9,7 @@
 
 - [ ] **Phase 1: Welcome Screen Fix** - Fix silent exit on Enter keypress at first-launch welcome screen
 - [ ] **Phase 2: Fix UAT gaps: thinking block collapsed leak and welcome dialog startup routing**
+- [ ] **Phase 3: ANTHROPIC_AUTH_TOKEN Bearer Auth Support** - Full ANTHROPIC_AUTH_TOKEN support with bearer/x-api-key switch logic and user-configurable JSON setting
 
 ## Phase Details
 
@@ -36,13 +37,21 @@ Plans:
 - [x] 02-01-PLAN.md — Fix thinking block collapsed content leak: add frame_count to RenderContext, animated dots in collapsed branch, update render.rs construction sites and render_snapshots.rs tests
 - [x] 02-02-PLAN.md — Fix startup routing (show_provider_setup → show) and add startup_routing.rs regression test
 
+### Phase 3: ANTHROPIC_AUTH_TOKEN Bearer Auth Support
+
+**Goal:** Fully support ANTHROPIC_AUTH_TOKEN as a credential source that sends Bearer auth instead of x-api-key; add explicit switch logic for auth header mode; expose user-configurable `use_bearer_auth` setting in settings.json provider config
+**Requirements**: TBD
+**Depends on:** Phase 2
+**Plans:** TBD
+
 ## Progress Table
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Welcome Screen Fix | 0/1 | Not started | - |
 | 2. Fix UAT gaps: thinking block and welcome routing | 0/2 | Not started | - |
+| 3. ANTHROPIC_AUTH_TOKEN Bearer Auth Support | 0/? | Not started | - |
 
 ---
 *Roadmap defined: 2026-05-04*
-*Last updated: 2026-05-05 after phase 2 planning*
+*Last updated: 2026-05-06 after phase 3 addition*
