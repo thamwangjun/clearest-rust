@@ -40,9 +40,14 @@ Plans:
 ### Phase 3: ANTHROPIC_AUTH_TOKEN Bearer Auth Support
 
 **Goal:** Fully support ANTHROPIC_AUTH_TOKEN as a credential source that sends Bearer auth instead of x-api-key; add explicit switch logic for auth header mode; expose user-configurable `use_bearer_auth` setting in settings.json provider config
-**Requirements**: TBD
+**Requirements**: D-01 through D-09
 **Depends on:** Phase 2
-**Plans:** TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — TDD Wave 1: Write failing bearer_auth.rs integration tests + add serial_test dev-dep (RED phase)
+- [ ] 03-02-PLAN.md — Implement ProviderConfig.use_bearer_auth field + conflict-first resolver returning anyhow::Result (GREEN phase)
+- [ ] 03-03-PLAN.md — Update main.rs call site with ? propagation; verify config.env injection in place (compile gate)
 
 ## Progress Table
 
@@ -50,8 +55,8 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Welcome Screen Fix | 0/1 | Not started | - |
 | 2. Fix UAT gaps: thinking block and welcome routing | 0/2 | Not started | - |
-| 3. ANTHROPIC_AUTH_TOKEN Bearer Auth Support | 0/? | Not started | - |
+| 3. ANTHROPIC_AUTH_TOKEN Bearer Auth Support | 0/3 | Not started | - |
 
 ---
 *Roadmap defined: 2026-05-04*
-*Last updated: 2026-05-06 after phase 3 addition*
+*Last updated: 2026-05-06 after phase 3 planning*
