@@ -150,7 +150,7 @@ fn resolve_fast_model_id(config: &Config) -> String {
 }
 
 async fn provider_for_config(config: &Config) -> Option<std::sync::Arc<dyn claurst_api::LlmProvider>> {
-    let anthropic_auth = config.resolve_anthropic_auth_async().await;
+    let anthropic_auth = config.resolve_anthropic_auth_async().await.ok().flatten();
     let registry = claurst_api::ProviderRegistry::from_config(
         config,
         claurst_api::client::ClientConfig {
@@ -1960,7 +1960,7 @@ impl SlashCommand for DoctorCommand {
 
         // ── API / Auth ──────────────────────────────────────────────────────
         lines.push("Authentication".to_string());
-        let anthropic_auth = ctx.config.resolve_anthropic_auth_async().await.unwrap_or((String::new(), false));
+        let anthropic_auth = ctx.config.resolve_anthropic_auth_async().await.ok().flatten().unwrap_or((String::new(), false));
         let client_config = claurst_api::client::ClientConfig {
             api_key: anthropic_auth.0,
             api_base: ctx.config.resolve_anthropic_api_base(),
