@@ -869,6 +869,11 @@ pub mod config {
         /// Provider-specific options (passed through to provider implementation)
         #[serde(default)]
         pub options: HashMap<String, serde_json::Value>,
+        /// When Some(true), force Bearer auth (Authorization: Bearer <token>) instead of x-api-key.
+        /// Mutually exclusive with api_key in this config and ANTHROPIC_API_KEY env var.
+        /// Default is None (no opinion — resolver uses env var names to determine mode).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub use_bearer_auth: Option<bool>,
     }
 
     impl Default for ProviderConfig {
@@ -880,6 +885,7 @@ pub mod config {
                 models_whitelist: Vec::new(),
                 models_blacklist: Vec::new(),
                 options: HashMap::new(),
+                use_bearer_auth: None,
             }
         }
     }
