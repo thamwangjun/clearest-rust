@@ -512,6 +512,15 @@ async fn main() -> anyhow::Result<()> {
             .api_base = Some(base.clone());
     }
 
+    // Inject config.env into the process environment so settings.json env vars
+    // (e.g. ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL) are visible to all resolvers.
+    // Real process env vars always win — only set if not already present.
+    for (key, value) in &config.env {
+        if std::env::var(key).is_err() {
+            std::env::set_var(key, value);
+        }
+    }
+
     // --dump-system-prompt fast path
     if cli.dump_system_prompt {
         let ctx = ContextBuilder::new(cwd.clone())
@@ -554,7 +563,7 @@ async fn main() -> anyhow::Result<()> {
     // explicitly the intended provider and no key exists at all.
     let active_provider = config.selected_provider_id();
     let (api_key, use_bearer_auth) = if active_provider == "anthropic" {
-        match config.resolve_anthropic_auth_async().await {
+        match config.resolve_anthropic_auth_async().await? {
             Some(auth) => auth,
             None => {
                 if is_headless {
@@ -933,6 +942,8 @@ async fn refresh_provider_runtime_state(
     let (api_key, use_bearer_auth) = config
         .resolve_anthropic_auth_async()
         .await
+        .ok()
+        .flatten()
         .unwrap_or((String::new(), false));
     let client_config = claurst_api::client::ClientConfig {
         api_key,
