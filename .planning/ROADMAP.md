@@ -47,7 +47,7 @@ Plans:
 Plans:
 - [x] 03-01-PLAN.md — TDD Wave 1: Write failing bearer_auth.rs integration tests + add serial_test dev-dep (RED phase)
 - [x] 03-02-PLAN.md — Implement ProviderConfig.use_bearer_auth field + conflict-first resolver returning anyhow::Result (GREEN phase)
-- [ ] 03-03-PLAN.md — Update main.rs call site with ? propagation; verify config.env injection in place (compile gate)
+- [x] 03-03-PLAN.md — Update main.rs call site with ? propagation; verify config.env injection in place (compile gate)
 
 ## Progress Table
 
