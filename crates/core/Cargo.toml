@@ -104,3 +104,4 @@ cpal = { version = "0.15", optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+serial_test = "3"
