@@ -1293,6 +1293,9 @@ pub mod config {
             let provider_api_key = provider_cfg
                 .and_then(|p| p.api_key.as_deref())
                 .filter(|s| !s.is_empty());
+            let top_level_api_key = self.api_key
+                .as_deref()
+                .filter(|s| !s.is_empty());
 
             // D-02 condition 1: both env vars non-empty
             if env_api_key.is_some() && env_auth_token.is_some() {
@@ -1316,6 +1319,14 @@ pub mod config {
                     "provider_configs.anthropic.use_bearer_auth=true conflicts with \
                      provider_configs.anthropic.api_key in settings. \
                      Remove api_key or set use_bearer_auth=false."
+                );
+            }
+            // D-02 condition 4: top-level Config.api_key + ANTHROPIC_AUTH_TOKEN env
+            if top_level_api_key.is_some() && env_auth_token.is_some() {
+                anyhow::bail!(
+                    "Config api_key and ANTHROPIC_AUTH_TOKEN are both set; \
+                     these are mutually exclusive (x-api-key vs Bearer auth). \
+                     Unset one to continue."
                 );
             }
 
