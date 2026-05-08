@@ -1312,6 +1312,7 @@ pub enum BridgeOutbound {
     },
     ToolEnd {
         id: String,
+        name: String,
         output: String,
         is_error: bool,
     },
@@ -1535,10 +1536,10 @@ pub async fn run_bridge_loop(
                             })
                             .await;
                     }
-                    Some(BridgeOutbound::ToolEnd { id, output, is_error }) => {
+                    Some(BridgeOutbound::ToolEnd { id, name, output, is_error }) => {
                         let _ = bridge_ev_tx
                             .send(BridgeEvent::ToolEnd {
-                                tool_name: String::new(),
+                                tool_name: name,
                                 tool_id: id,
                                 result: output,
                                 is_error,

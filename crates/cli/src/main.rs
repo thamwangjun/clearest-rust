@@ -2416,9 +2416,10 @@ async fn run_interactive(
                             input_preview: Some(input_json.clone()),
                         })
                     }
-                    QueryEvent::ToolEnd { tool_id, result, is_error, .. } => {
+                    QueryEvent::ToolEnd { tool_name, tool_id, result, is_error } => {
                         Some(BridgeOutbound::ToolEnd {
                             id: tool_id.clone(),
+                            name: tool_name.clone(),
                             output: result.clone(),
                             is_error: *is_error,
                         })
