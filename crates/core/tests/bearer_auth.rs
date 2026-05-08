@@ -154,6 +154,32 @@ async fn pin_bearer_with_no_token_returns_none() {
 }
 
 // ---------------------------------------------------------------------------
+// WR-04: Injection guard defers to pre-existing env value, not settings value
+// ---------------------------------------------------------------------------
+#[tokio::test]
+#[serial]
+async fn config_env_injection_does_not_overwrite_existing_env() {
+    reset_anthropic_env();
+    std::env::set_var("ANTHROPIC_AUTH_TOKEN", "btr-from-real-env");
+
+    // Simulate injection with a different value from settings
+    let mut env = HashMap::new();
+    env.insert("ANTHROPIC_AUTH_TOKEN".into(), "btr-from-settings".into());
+    for (k, v) in &env {
+        if std::env::var(k).is_err() {
+            std::env::set_var(k, v);
+        }
+    }
+
+    let cfg = Config::default();
+    let res = cfg.resolve_anthropic_auth_async().await.unwrap();
+    // Real env wins; settings value must not overwrite
+    assert_eq!(res, Some(("btr-from-real-env".to_string(), true)));
+
+    reset_anthropic_env();
+}
+
+// ---------------------------------------------------------------------------
 // Regression: ANTHROPIC_API_KEY alone still resolves to x-api-key (false)
 // Guards against Pitfall 2 from RESEARCH.md.
 // ---------------------------------------------------------------------------
