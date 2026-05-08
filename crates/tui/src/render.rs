@@ -69,7 +69,7 @@ const SPINNER: &[char] = &['\u{00b7}', '\u{2722}', '*', '\u{2736}', '\u{273b}', 
 #[cfg(not(target_os = "windows"))]
 const SPINNER: &[char] = &['\u{00b7}', '\u{2722}', '\u{2733}', '\u{2736}', '\u{273b}', '\u{273d}',
                             '\u{273d}', '\u{273b}', '\u{2736}', '\u{2733}', '\u{2722}', '\u{00b7}'];
-use crate::theme_colors::CLAUDE_ORANGE;
+use crate::theme_colors::BRAND_PINK;
 const WELCOME_BOX_HEIGHT: u16 = 12;
 
 fn spinner_char(frame_count: u64) -> char {
@@ -210,7 +210,7 @@ fn startup_notice_lines(app: &App, width: u16) -> Vec<Line<'static>> {
         lines.push(Line::from(vec![
             Span::styled(
                 format!(" {} ", crate::figures::REFERENCE_MARK),
-                Style::default().fg(CLAUDE_ORANGE).add_modifier(Modifier::BOLD),
+                Style::default().fg(BRAND_PINK).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 truncate_end(summary, max_width),
@@ -227,7 +227,7 @@ fn startup_notice_lines(app: &App, width: u16) -> Vec<Line<'static>> {
                 "Remote session active".to_string()
             };
             lines.push(Line::from(vec![
-                Span::styled(" remote ", Style::default().fg(CLAUDE_ORANGE)),
+                Span::styled(" remote ", Style::default().fg(BRAND_PINK)),
                 Span::styled(label, Style::default().fg(Color::DarkGray)),
             ]));
         }
@@ -254,7 +254,7 @@ fn startup_notice_lines(app: &App, width: u16) -> Vec<Line<'static>> {
 
     if let Some(url) = app.remote_session_url.as_deref() {
         lines.push(Line::from(vec![
-            Span::styled(" link ", Style::default().fg(CLAUDE_ORANGE)),
+            Span::styled(" link ", Style::default().fg(BRAND_PINK)),
             Span::styled(
                 truncate_end(url, max_width),
                 Style::default().fg(Color::DarkGray),
@@ -1022,7 +1022,7 @@ fn render_messages(frame: &mut Frame, app: &App, area: Rect) {
             indicator,
             Style::default()
                 .fg(Color::Black)
-                .bg(CLAUDE_ORANGE)
+                .bg(BRAND_PINK)
                 .add_modifier(Modifier::BOLD),
         )]);
         frame.render_widget(Paragraph::new(vec![ind_line]), ind_area);
@@ -1359,7 +1359,7 @@ fn render_welcome_box(frame: &mut Frame, app: &App, area: Rect) {
     if area.height < box_height || box_width < 30 {
         // Too small: fall back to a single line
         let line = Line::from(vec![
-            Span::styled("Claurst ", Style::default().fg(CLAUDE_ORANGE).add_modifier(Modifier::BOLD)),
+            Span::styled("Claurst ", Style::default().fg(BRAND_PINK).add_modifier(Modifier::BOLD)),
             Span::styled(format!("v{}", APP_VERSION), Style::default().fg(Color::DarkGray)),
         ]);
         frame.render_widget(Paragraph::new(vec![line]), area);
@@ -1593,7 +1593,7 @@ fn render_tool_block_lines(lines: &mut Vec<Line<'static>>, block: &crate::app::T
     let accent = if block.status == ToolStatus::Error {
         Color::Rgb(255, 140, 0)
     } else {
-        CLAUDE_ORANGE
+        BRAND_PINK
     };
     let mut header_spans = vec![Span::styled("   ~ ".to_string(), Style::default().fg(accent))];
     if running {
@@ -2287,17 +2287,17 @@ fn render_prompt_suggestions(frame: &mut Frame, app: &App, area: Rect) {
     for (row, suggestion) in suggestions[start..end].iter().enumerate() {
         let is_selected = start + row == selected;
         let accent_style = if is_selected {
-            Style::default().fg(CLAUDE_ORANGE).add_modifier(Modifier::BOLD)
+            Style::default().fg(BRAND_PINK).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
         let label_style = if is_selected {
-            Style::default().fg(CLAUDE_ORANGE).add_modifier(Modifier::BOLD)
+            Style::default().fg(BRAND_PINK).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
         let detail_style = if is_selected {
-            Style::default().fg(CLAUDE_ORANGE)
+            Style::default().fg(BRAND_PINK)
         } else {
             Style::default().fg(Color::DarkGray)
         };

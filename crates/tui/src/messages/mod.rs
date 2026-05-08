@@ -63,7 +63,7 @@ const MAX_USER_PROMPT_DISPLAY_CHARS: usize = 10_000;
 const TRUNCATE_USER_PROMPT_HEAD_CHARS: usize = 2_500;
 const TRUNCATE_USER_PROMPT_TAIL_CHARS: usize = 2_500;
 
-use crate::theme_colors::CLAUDE_ORANGE;
+use crate::theme_colors::BRAND_PINK;
 const TRANSCRIPT_USER_BG: Color = Color::Rgb(23, 23, 31);
 const TRANSCRIPT_CHIP_BG: Color = Color::Rgb(31, 31, 41);
 const TRANSCRIPT_TEXT: Color = Color::Rgb(236, 236, 241);
@@ -165,7 +165,7 @@ fn apply_block_style(mut line: Line<'static>, width: u16) -> Line<'static> {
     }
 
     let mut spans = vec![
-        Span::styled("▏", Style::default().fg(CLAUDE_ORANGE).bg(bg)),
+        Span::styled("▏", Style::default().fg(BRAND_PINK).bg(bg)),
         Span::styled(" ", Style::default().bg(bg)),
     ];
     spans.extend(line.spans);
@@ -207,7 +207,7 @@ fn render_attachment_chip(kind: &str, label: String) -> Line<'static> {
             format!(" {} ", kind),
             Style::default()
                 .fg(Color::Black)
-                .bg(CLAUDE_ORANGE)
+                .bg(BRAND_PINK)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -886,7 +886,7 @@ fn render_tool_use_inner(tool_name: &str, input: &serde_json::Value) -> Vec<Line
         "task" | "agent" => return {
             let mut task_lines = Vec::new();
             task_lines.push(Line::from(vec![
-                Span::styled("  ~ ".to_string(), Style::default().fg(CLAUDE_ORANGE)),
+                Span::styled("  ~ ".to_string(), Style::default().fg(BRAND_PINK)),
                 Span::styled(
                     subagent_title(input),
                     Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
@@ -904,7 +904,7 @@ fn render_tool_use_inner(tool_name: &str, input: &serde_json::Value) -> Vec<Line
     };
 
     lines.push(Line::from(vec![
-        Span::styled("  ~ ".to_string(), Style::default().fg(CLAUDE_ORANGE)),
+        Span::styled("  ~ ".to_string(), Style::default().fg(BRAND_PINK)),
         Span::styled(
             title.to_string(),
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
@@ -1030,7 +1030,7 @@ pub fn render_tool_result_rejected(tool_name: &str, reason: &str) -> Vec<Line<'s
     vec![
         Line::from(vec![Span::styled(
             format!("  \u{2717} {} \u{2014} interrupted", tool_name),
-            Style::default().fg(CLAUDE_ORANGE),
+            Style::default().fg(BRAND_PINK),
         )]),
         Line::from(vec![Span::styled(
             format!("    {}", reason),
@@ -1169,13 +1169,13 @@ pub fn render_plan_steps(steps: &[String]) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     lines.push(Line::from(vec![Span::styled(
         "  Plan:".to_string(),
-        Style::default().fg(CLAUDE_ORANGE).add_modifier(Modifier::BOLD),
+        Style::default().fg(BRAND_PINK).add_modifier(Modifier::BOLD),
     )]));
     for (i, step) in steps.iter().enumerate() {
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {}. ", i + 1),
-                Style::default().fg(CLAUDE_ORANGE),
+                Style::default().fg(BRAND_PINK),
             ),
             Span::styled(step.clone(), Style::default().fg(Color::White)),
         ]));
@@ -1188,7 +1188,7 @@ pub fn render_plan_approval_prompt() -> Vec<Line<'static>> {
     vec![Line::from(vec![
         Span::styled(
             "  Approve this plan? ".to_string(),
-            Style::default().fg(CLAUDE_ORANGE).add_modifier(Modifier::BOLD),
+            Style::default().fg(BRAND_PINK).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "[y] yes  [n] no  [e] edit".to_string(),
@@ -1733,7 +1733,7 @@ pub fn render_task_assignment(id: &str, subject: &str, desc: &str) -> Vec<Line<'
         subject.trim()
     };
     lines.push(Line::from(vec![
-        Span::styled("  ~ ", Style::default().fg(CLAUDE_ORANGE)),
+        Span::styled("  ~ ", Style::default().fg(BRAND_PINK)),
         Span::styled(
             title.to_string(),
             Style::default().fg(Color::White).add_modifier(Modifier::BOLD),

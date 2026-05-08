@@ -7,7 +7,7 @@ use ratatui::style::Color;
 
 /// Claurst brand pink/magenta — used for the app name and accent elements.
 /// Defined once here so both `messages` and `render` modules stay in sync.
-pub const CLAUDE_ORANGE: Color = Color::Rgb(233, 30, 99);
+pub const BRAND_PINK: Color = Color::Rgb(233, 30, 99);
 
 /// Color palette for a specific theme.
 pub struct ColorPalette {
