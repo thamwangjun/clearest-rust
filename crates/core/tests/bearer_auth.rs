@@ -111,6 +111,35 @@ async fn pin_bearer_with_settings_api_key_errors() {
 }
 
 // ---------------------------------------------------------------------------
+// CR-01: use_bearer_auth=true + top-level Config.api_key → Err
+// ---------------------------------------------------------------------------
+#[tokio::test]
+#[serial]
+async fn pin_bearer_with_top_level_api_key_errors() {
+    reset_anthropic_env();
+
+    let mut cfg = Config::default();
+    cfg.provider = Some("anthropic".into());
+    cfg.api_key = Some("sk-top-level-key".into());
+    cfg.provider_configs.insert(
+        "anthropic".into(),
+        ProviderConfig {
+            use_bearer_auth: Some(true),
+            ..ProviderConfig::default()
+        },
+    );
+    let err = cfg.resolve_anthropic_auth_async().await.unwrap_err();
+
+    assert!(
+        err.to_string().contains("use_bearer_auth"),
+        "expected error to mention use_bearer_auth, got: {}",
+        err
+    );
+
+    reset_anthropic_env();
+}
+
+// ---------------------------------------------------------------------------
 // D-09 case 5: config.env injection makes ANTHROPIC_AUTH_TOKEN visible → bearer
 // ---------------------------------------------------------------------------
 #[tokio::test]

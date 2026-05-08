@@ -1321,6 +1321,14 @@ pub mod config {
                      Remove api_key or set use_bearer_auth=false."
                 );
             }
+            // D-02 condition 3b: bearer pin + top-level Config.api_key
+            if use_bearer_pinned && top_level_api_key.is_some() {
+                anyhow::bail!(
+                    "provider_configs.anthropic.use_bearer_auth=true conflicts with \
+                     Config.api_key (x-api-key mode). \
+                     Remove api_key or set use_bearer_auth=false."
+                );
+            }
             // D-02 condition 4: top-level Config.api_key + ANTHROPIC_AUTH_TOKEN env
             if top_level_api_key.is_some() && env_auth_token.is_some() {
                 anyhow::bail!(
