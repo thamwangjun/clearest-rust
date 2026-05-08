@@ -1263,7 +1263,7 @@ impl SlashCommand for StatusCommand {
             Ok(Some((_, true))) => "Authenticated (Bearer token)".to_string(),
             Ok(Some((_, false))) => "Authenticated (API key)".to_string(),
             Ok(None) => "Not authenticated".to_string(),
-            Err(_) => "Not authenticated".to_string(),
+            Err(e) => format!("Auth error: {e}"),
         };
 
         // MCP status
