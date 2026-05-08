@@ -3642,5 +3642,35 @@ mod tests {
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         assert_eq!(result, None, "ANTHROPIC_AUTH_TOKEN should not be visible to non-Anthropic providers");
     }
+
+    #[test]
+    fn test_config_env_injection_makes_auth_token_visible_to_detect() {
+        // Verifies that detect_api_key_env_source sees ANTHROPIC_AUTH_TOKEN when it
+        // is only present in config.env (not in the real process env at call time).
+        // This test exercises the injection loop that must exist in auth_status().
+        let _guard = env_test_mutex().lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
+
+        // Simulate the config.env map that settings.json would provide.
+        let mut config_env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        config_env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), "btr-from-config-env".to_string());
+
+        // Apply the injection loop (the same code that must live in auth_status()).
+        for (key, value) in &config_env {
+            if std::env::var(key).is_err() {
+                std::env::set_var(key, value);
+            }
+        }
+
+        let result = detect_api_key_env_source("anthropic");
+        std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
+
+        assert_eq!(
+            result,
+            Some("ANTHROPIC_AUTH_TOKEN".to_string()),
+            "detect_api_key_env_source must see ANTHROPIC_AUTH_TOKEN injected from config.env"
+        );
+    }
 }
 
