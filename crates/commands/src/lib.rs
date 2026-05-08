@@ -149,8 +149,8 @@ fn resolve_fast_model_id(config: &Config) -> String {
         .unwrap_or_else(|| stripped_model_for_provider(provider_id, config.effective_model()).to_string())
 }
 
-async fn provider_for_config(config: &Config) -> Option<std::sync::Arc<dyn claurst_api::LlmProvider>> {
-    let anthropic_auth = config.resolve_anthropic_auth_async().await.ok().flatten();
+async fn provider_for_config(config: &Config) -> anyhow::Result<Option<std::sync::Arc<dyn claurst_api::LlmProvider>>> {
+    let anthropic_auth = config.resolve_anthropic_auth_async().await?;
     let registry = claurst_api::ProviderRegistry::from_config(
         config,
         claurst_api::client::ClientConfig {
@@ -166,9 +166,9 @@ async fn provider_for_config(config: &Config) -> Option<std::sync::Arc<dyn claur
         },
     );
 
-    provider_lookup_ids(config.selected_provider_id())
+    Ok(provider_lookup_ids(config.selected_provider_id())
         .into_iter()
-        .find_map(|lookup_id| registry.get(&claurst_core::ProviderId::new(lookup_id)).cloned())
+        .find_map(|lookup_id| registry.get(&claurst_core::ProviderId::new(lookup_id)).cloned()))
 }
 
 fn text_from_content_blocks(blocks: &[ContentBlock]) -> String {
@@ -1960,7 +1960,13 @@ impl SlashCommand for DoctorCommand {
 
         // ── API / Auth ──────────────────────────────────────────────────────
         lines.push("Authentication".to_string());
-        let anthropic_auth = ctx.config.resolve_anthropic_auth_async().await.ok().flatten().unwrap_or((String::new(), false));
+        let anthropic_auth = match ctx.config.resolve_anthropic_auth_async().await {
+            Ok(auth) => auth.unwrap_or((String::new(), false)),
+            Err(e) => {
+                lines.push(format!("  ERROR: {e}"));
+                (String::new(), false)
+            }
+        };
         let client_config = claurst_api::client::ClientConfig {
             api_key: anthropic_auth.0,
             api_base: ctx.config.resolve_anthropic_api_base(),
@@ -2500,11 +2506,16 @@ impl SlashCommand for ReviewCommand {
         // ------------------------------------------------------------------
         let model = ctx.config.effective_model().to_string();
         let provider = match provider_for_config(&ctx.config).await {
-            Some(provider) => provider,
-            None => {
+            Ok(Some(provider)) => provider,
+            Ok(None) => {
                 return CommandResult::Error(
                     "Cannot initialise provider client for code review.".to_string(),
                 );
+            }
+            Err(e) => {
+                return CommandResult::Error(format!(
+                    "Cannot initialise provider client for code review: {e}"
+                ));
             }
         };
 
@@ -4305,13 +4316,19 @@ impl SlashCommand for RenameCommand {
         }
 
         let provider = match provider_for_config(&ctx.config).await {
-            Some(provider) => provider,
-            None => {
+            Ok(Some(provider)) => provider,
+            Ok(None) => {
                 return CommandResult::Error(
                     "Could not create a provider client for auto-naming.\n\
                      Use /rename <name> to set the name manually."
                         .to_string(),
                 );
+            }
+            Err(e) => {
+                return CommandResult::Error(format!(
+                    "Could not create a provider client for auto-naming: {e}\n\
+                     Use /rename <name> to set the name manually."
+                ));
             }
         };
         let rename_model = resolve_fast_model_id(&ctx.config);
