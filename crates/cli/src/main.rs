@@ -82,9 +82,11 @@ impl Tool for McpToolWrapper {
             return ToolResult::error(e.to_string());
         }
 
-        // Strip the server-name prefix to get the bare tool name.
+        // Strip the server-name prefix to get the bare tool name for error messages.
+        // Note: dispatch uses self.tool_def.name (full prefixed name); the stripped
+        // version is only used below in the Err branch to produce a readable message.
         let prefix = format!("{}_", self.server_name);
-        let bare_name = self
+        let bare_name_for_error = self
             .tool_def
             .name
             .strip_prefix(&prefix)
@@ -101,7 +103,7 @@ impl Tool for McpToolWrapper {
                     ToolResult::success(text)
                 }
             }
-            Err(e) => ToolResult::error(format!("MCP tool '{}' failed: {}", bare_name, e)),
+            Err(e) => ToolResult::error(format!("MCP tool '{}' failed: {}", bare_name_for_error, e)),
         }
     }
 }
