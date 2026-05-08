@@ -788,17 +788,11 @@ impl BridgeSession {
 /// Prefer [`start_bridge`] for the simple one-shot API.
 pub struct BridgeManager {
     config: BridgeConfig,
-    http: reqwest::Client,
 }
 
 impl BridgeManager {
     pub fn new(config: BridgeConfig) -> anyhow::Result<Self> {
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .user_agent(format!("claude-code-rust/{}", env!("CARGO_PKG_VERSION")))
-            .build()
-            .context("BridgeManager: failed to build HTTP client")?;
-        Ok(Self { config, http })
+        Ok(Self { config })
     }
 
     /// Start the bridge polling loop, returning channel endpoints and the
@@ -813,7 +807,7 @@ impl BridgeManager {
         mpsc::Sender<BridgeEvent>,
         String,
     )> {
-        start_bridge_with_client(self.config.clone(), self.http.clone(), cancel).await
+        start_bridge_with_client(self.config.clone(), cancel).await
     }
 }
 
@@ -839,18 +833,11 @@ pub async fn start_bridge(
     mpsc::Sender<BridgeEvent>,
     String,
 )> {
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent(format!("claude-code-rust/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .context("start_bridge: failed to build HTTP client")?;
-
-    start_bridge_with_client(config, http, cancel).await
+    start_bridge_with_client(config, cancel).await
 }
 
 async fn start_bridge_with_client(
     config: BridgeConfig,
-    _http: reqwest::Client,
     cancel: CancellationToken,
 ) -> anyhow::Result<(
     mpsc::Receiver<BridgeMessage>,
