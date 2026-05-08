@@ -1290,7 +1290,7 @@ pub mod config {
                 .as_deref()
                 .filter(|s| !s.is_empty());
 
-            // D-02 condition 1: both env vars non-empty — conflict
+            // D-02 condition 1/3: both env vars non-empty — conflict
             if env_api_key.is_some() && env_auth_token.is_some() {
                 anyhow::bail!(
                     "ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are both set; \
@@ -1298,7 +1298,7 @@ pub mod config {
                      Unset one to continue."
                 );
             }
-            // D-02 condition 4: top-level Config.api_key + ANTHROPIC_AUTH_TOKEN env
+            // D-02 condition 2/3: top-level Config.api_key + ANTHROPIC_AUTH_TOKEN env
             if top_level_api_key.is_some() && env_auth_token.is_some() {
                 anyhow::bail!(
                     "Config api_key and ANTHROPIC_AUTH_TOKEN are both set; \
@@ -1306,7 +1306,7 @@ pub mod config {
                      Unset one to continue."
                 );
             }
-            // D-02 condition 5: provider api_key in settings + ANTHROPIC_AUTH_TOKEN env
+            // D-02 condition 3/3: provider api_key in settings + ANTHROPIC_AUTH_TOKEN env
             if provider_api_key.is_some() && env_auth_token.is_some() {
                 anyhow::bail!(
                     "anthropic.api_key in settings and ANTHROPIC_AUTH_TOKEN are both set; \
@@ -1322,7 +1322,7 @@ pub mod config {
             if let Some(key) = self.resolve_anthropic_api_key() {
                 return Ok(Some((key, false)));
             }
-            // Priority 4: OAuth tokens (unchanged logic, returns wrapped in Ok)
+            // Priority 3: OAuth tokens (stored credentials)
             let tokens = match crate::oauth::OAuthTokens::load().await {
                 Some(t) => t,
                 None => return Ok(None),
