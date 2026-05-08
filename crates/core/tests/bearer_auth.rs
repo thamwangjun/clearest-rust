@@ -163,7 +163,7 @@ async fn config_env_injection_does_not_overwrite_existing_env() {
     std::env::set_var("ANTHROPIC_AUTH_TOKEN", "btr-from-real-env");
 
     // Simulate injection with a different value from settings
-    let mut env = HashMap::new();
+    let mut env: HashMap<String, String> = HashMap::new();
     env.insert("ANTHROPIC_AUTH_TOKEN".into(), "btr-from-settings".into());
     for (k, v) in &env {
         if std::env::var(k).is_err() {
