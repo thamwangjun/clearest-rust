@@ -1036,7 +1036,7 @@ pub async fn start_bridge_session(
             anyhow::bail!(
                 "Bridge session registration failed: server returned HTTP {}. {}",
                 status,
-                if body_text.is_empty() { String::new() } else { format!("Response: {}", &body_text[..body_text.len().min(200)]) }
+                if body_text.is_empty() { String::new() } else { format!("Response: {}", body_text.chars().take(200).collect::<String>()) }
             );
         }
     }
