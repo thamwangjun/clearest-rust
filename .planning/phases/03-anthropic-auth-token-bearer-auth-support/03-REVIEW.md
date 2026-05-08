@@ -2,268 +2,169 @@
 phase: 03-anthropic-auth-token-bearer-auth-support
 reviewed: 2026-05-08T00:00:00Z
 depth: standard
-files_reviewed: 10
+files_reviewed: 5
 files_reviewed_list:
   - crates/cli/src/main.rs
   - crates/commands/src/lib.rs
+  - crates/core/Cargo.toml
   - crates/core/src/lib.rs
   - crates/core/tests/bearer_auth.rs
-  - crates/bridge/src/lib.rs
-  - crates/tui/src/messages/mod.rs
-  - crates/tui/src/render.rs
-  - crates/tui/src/theme_colors.rs
-  - crates/tui/tests/render_snapshots.rs
-  - crates/tui/tests/startup_routing.rs
 findings:
   critical: 2
-  warning: 4
-  info: 3
-  total: 9
+  warning: 3
+  info: 1
+  total: 6
 status: issues_found
 ---
 
 # Phase 03: Code Review Report
 
-**Reviewed:** 2026-05-08
+**Reviewed:** 2026-05-08T00:00:00Z
 **Depth:** standard
-**Files Reviewed:** 10
+**Files Reviewed:** 5
 **Status:** issues_found
 
 ## Summary
 
-This phase adds `ANTHROPIC_AUTH_TOKEN` bearer-auth resolution, conflict detection (D-02), and `use_bearer_auth` pinning to `Config::resolve_anthropic_auth_async()`. The core resolver logic in `crates/core/src/lib.rs` is mostly correct; the bearer-auth tests in `crates/core/tests/bearer_auth.rs` cover the main happy-path and conflict cases.
-
-Two critical issues were found: a security vulnerability in `crates/bridge/src/lib.rs` where a live authentication token is exposed in derived `Debug` and `Serialize` output, and a missing conflict-detection branch in the resolver (silent wrong behaviour when `use_bearer_auth=true` is set alongside the top-level `Config.api_key`). Four warnings cover a busy-loop risk, a retry off-by-one, a data-loss mapping, and incorrect character-vs-width handling in a TUI helper. Three info items cover a misleading constant name, a dead-code enum variant, and a tautological test assertion.
+This phase adds `ANTHROPIC_AUTH_TOKEN` bearer auth support: a new resolver (`resolve_anthropic_auth_async`), conflict detection for mutually exclusive auth modes, a `use_bearer_auth` pin in `ProviderConfig`, bearer-aware display in `claude auth status` and `/status`, and a `detect_api_key_env_source` helper. The core logic is sound for the primary happy paths, but two correctness gaps remain: one missing conflict-detection case that lets a contradictory configuration silently succeed, and weak entropy in the PKCE/state generators. Three additional warnings cover swallowed errors, an incomplete user-facing hint, and a fragile test isolation pattern.
 
 ---
 
 ## Critical Issues
 
-### CR-01: `BridgeSessionInfo` exposes auth token via `derive(Debug)` and `derive(Serialize)`
+### CR-01: Missing conflict guard — `use_bearer_auth=true` + `Config.api_key` (top-level)
 
-**File:** `crates/bridge/src/lib.rs:894`
+**File:** `crates/core/src/lib.rs:1308-1331`
 
-**Issue:** `BridgeSessionInfo` holds a live bearer token in its `pub token: String` field and derives both `Debug` and `Serialize` without any redaction. Any call to `format!("{:?}", info)`, any `tracing` log that records the struct, or any `serde_json::to_string(&info)` will emit the token in plaintext. The hand-written `Display` implementation correctly omits the token, but `Debug` and `Serialize` do not. By contrast, `BridgeConfig::session_token` (line 192) has a manual `Debug` implementation specifically to prevent this exact leak.
+**Issue:** The resolver guards three of four conflict combinations involving `use_bearer_pinned`:
+- condition 2: `use_bearer_pinned && env_api_key` — error
+- condition 3: `use_bearer_pinned && provider_api_key` — error
+- condition 4: `top_level_api_key && env_auth_token` — error
+
+But the combination `use_bearer_pinned=true && top_level_api_key.is_some()` has **no guard**. When a user has `use_bearer_auth=true` in `provider_configs.anthropic` alongside a top-level `Config.api_key` (e.g. set via `--api-key` CLI flag or directly in settings), the resolver silently falls through to Priority 2 (`resolve_anthropic_api_key`), which picks up the top-level key and returns `(key, false)` — the opposite of what `use_bearer_pinned` requested. The user's intent is violated without any warning.
 
 **Fix:**
 ```rust
-// Replace #[derive(Debug, Clone, Serialize, Deserialize)] with:
-#[derive(Clone, Serialize, Deserialize)]
-pub struct BridgeSessionInfo {
-    pub session_id: String,
-    pub session_url: String,
-    #[serde(skip_serializing)]
-    pub token: String,
-}
-
-impl std::fmt::Debug for BridgeSessionInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BridgeSessionInfo")
-            .field("session_id", &self.session_id)
-            .field("session_url", &self.session_url)
-            .field("token", &"<redacted>")
-            .finish()
-    }
-}
-```
-
----
-
-### CR-02: Missing conflict check — `use_bearer_auth=true` + top-level `Config.api_key` silently produces `Ok(None)`
-
-**File:** `crates/core/src/lib.rs:1316-1334`
-
-**Issue:** The D-02 conflict-detection matrix in `resolve_anthropic_auth_async` has four checks but is missing one combination:
-
-| Checked | Condition |
-|---|---|
-| Yes | `env_api_key` + `env_auth_token` (condition 1) |
-| Yes | `use_bearer_pinned` + `env_api_key` (condition 2) |
-| Yes | `use_bearer_pinned` + `provider_api_key` (condition 3) |
-| Yes | `top_level_api_key` + `env_auth_token` (condition 4) |
-| **No** | **`use_bearer_pinned` + `top_level_api_key`** |
-
-When a user sets `provider_configs.anthropic.use_bearer_auth = true` in settings and also has `api_key` set at the top-level `Config` (e.g. via `--api-key` CLI flag or `"api_key"` at the settings root), the code silently reaches Priority 1 and returns `Ok(env_auth_token.map(|t| (t, true)))`. If no `ANTHROPIC_AUTH_TOKEN` env var is set, this returns `Ok(None)` — ignoring the conflicting api_key entirely with no error. The user believes bearer auth is configured but the session falls through to the "no credentials" onboarding flow.
-
-**Fix:** Add the missing guard immediately after condition 3:
-```rust
+// Add after condition 3 (line 1323), before condition 4:
 // D-02 condition 3b: bearer pin + top-level Config.api_key
 if use_bearer_pinned && top_level_api_key.is_some() {
     anyhow::bail!(
         "provider_configs.anthropic.use_bearer_auth=true conflicts with \
-         top-level api_key in Config (x-api-key mode). \
+         Config.api_key (x-api-key mode). \
          Remove api_key or set use_bearer_auth=false."
     );
 }
 ```
-Add a corresponding test in `crates/core/tests/bearer_auth.rs`.
+
+Also add a corresponding test in `crates/core/tests/bearer_auth.rs` mirroring `pin_bearer_with_settings_api_key_errors` but setting `cfg.api_key = Some(...)` instead of `provider.api_key`.
+
+---
+
+### CR-02: Weak entropy in PKCE code verifier and OAuth state generators
+
+**File:** `crates/core/src/lib.rs:3559-3587`
+
+**Issue:** Both `generate_code_verifier()` and `generate_state()` build their random bytes by concatenating two `uuid::Uuid::new_v4()` values. UUID v4 has 6 fixed bits (variant + version markers) out of 128, so the effective entropy is 122 + 122 = 244 bits, not 256 bits as the "32-byte random" comment states. More importantly, using `Uuid::new_v4()` as the entropy source obscures the security dependency: if `getrandom` feature flags are misconfigured (e.g. on non-standard targets), the UUID crate may silently fall back to a weak or panicking RNG, whereas calling `getrandom::getrandom` directly surfaces the failure immediately.
+
+The `getrandom` crate is already a direct workspace dependency (`crates/core/Cargo.toml:99`). The PKCE state parameter in particular must satisfy RFC 6749 §10.12 ("unguessable value"), so the entropy source should be explicit and auditable.
+
+**Fix:**
+```rust
+pub fn generate_code_verifier() -> String {
+    use base64::Engine;
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).expect("OS CSPRNG unavailable");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+pub fn generate_state() -> String {
+    use base64::Engine;
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).expect("OS CSPRNG unavailable");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+```
 
 ---
 
 ## Warnings
 
-### WR-01: `run_bridge_loop` near-busy-loops when `outbound_rx` sender is dropped
+### WR-01: `StatusCommand::execute` silently masks auth conflict errors
 
-**File:** `crates/bridge/src/lib.rs:1526-1531`
+**File:** `crates/commands/src/lib.rs:1266`
 
-**Issue:** In the `run_bridge_loop` `tokio::select!` block, when the `outbound_rx` sender is dropped (query loop exits), `outbound_rx.recv()` returns `Poll::Ready(None)` instantly on every poll. `tokio::select!` picks randomly among ready futures, so the `outbound` arm wins most iterations, continuously executing the `None => { /* nothing */ }` branch and starving the `tokio::time::sleep(poll_interval)` arm. This causes near-100% CPU usage for the bridge task after the query loop exits.
+**Issue:** The `Err(_)` arm returns the string `"Not authenticated"` without surfacing the error message. If `resolve_anthropic_auth_async` returns an `Err` (e.g. the D-02 conflict "ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are both set"), the user running `/status` sees `Auth: Not authenticated` instead of the actual conflict explanation. A misconfigured user appears unauthenticated rather than getting the actionable error message.
 
-**Fix:** Break out of the loop when the outbound channel closes:
+**Fix:**
 ```rust
-None => {
-    // Query loop exited; no more outbound events to forward.
-    // Exit cleanly rather than spinning.
-    break;
-}
+let auth_status = match ctx.config.resolve_anthropic_auth_async().await {
+    Ok(Some((_, true))) => "Authenticated (Bearer token)".to_string(),
+    Ok(Some((_, false))) => "Authenticated (API key)".to_string(),
+    Ok(None) => "Not authenticated".to_string(),
+    Err(e) => format!("Auth error: {e}"),
+};
 ```
 
 ---
 
-### WR-02: `poll_bridge_messages` off-by-one — retries 4 times when `max_retries = 3`
+### WR-02: `auth_status` "not logged in" hint omits `ANTHROPIC_AUTH_TOKEN`
 
-**File:** `crates/bridge/src/lib.rs:1115-1119`
+**File:** `crates/cli/src/main.rs:3442-3443`
 
-**Issue:** `attempt` starts at `0` and is incremented before the `> max_retries` check. With `max_retries = 3`, the bail condition `attempt > 3` is only `true` when `attempt = 4`, meaning four 429-retry attempts are made before failing. The error message also lies, reporting "after 3 retries" when 4 were actually performed.
+**Issue:** When the user is not logged in and the active provider is Anthropic, the hint reads:
 
-Trace:
-- attempt 1: `1 > 3` false → sleep, retry
-- attempt 2: `2 > 3` false → sleep, retry
-- attempt 3: `3 > 3` false → sleep, retry
-- attempt 4: `4 > 3` true → bail! "after 3 retries" (wrong)
+```
+Run `claude auth login` or set ANTHROPIC_API_KEY.
+```
 
-**Fix:** Change `>` to `>=`:
+`ANTHROPIC_AUTH_TOKEN` is a valid credential path introduced in this phase, but it is not mentioned. A user who has a bearer token available but no API key will not find the correct guidance from this message.
+
+**Fix:**
 ```rust
-if attempt >= max_retries {
-    anyhow::bail!(
-        "poll_bridge_messages: rate-limited (HTTP 429) after {} retries",
-        max_retries
-    );
-}
+"Run `claude auth login`, set ANTHROPIC_API_KEY, or set ANTHROPIC_AUTH_TOKEN.".to_string()
 ```
 
 ---
 
-### WR-03: `BridgeOutbound::ToolEnd` → `BridgeEvent::ToolEnd` mapping sends empty `tool_name`
+### WR-03: `env_test_mutex` in `main.rs` unit tests uses a poisonable mutex
 
-**File:** `crates/bridge/src/lib.rs:1551-1559`
+**File:** `crates/cli/src/main.rs:3580-3582`
 
-**Issue:** When translating `BridgeOutbound::ToolEnd` into `BridgeEvent::ToolEnd`, `tool_name` is hardcoded to `String::new()`. The `BridgeOutbound::ToolEnd` struct lacks a `name` field (unlike `BridgeOutbound::ToolStart` which carries `name: String`), so the tool name is silently dropped. The web UI receives a `tool_end` event with `tool_name: ""`, breaking any UI logic that correlates `ToolStart`/`ToolEnd` events by name.
+**Issue:** The test helper `env_test_mutex()` uses `std::sync::Mutex` and all callers call `.lock().unwrap()`. If any test panics while holding the lock, the mutex becomes poisoned and all subsequent tests calling `.lock().unwrap()` will also panic — producing spurious failures that look like real test failures. The integration tests in `crates/core/tests/bearer_auth.rs` use `#[serial]` from `serial_test` for test ordering, which does not have this poisoning hazard.
 
+**Fix (option A — tolerate poisoning):**
 ```rust
-// Current — tool_name is always empty:
-Some(BridgeOutbound::ToolEnd { id, output, is_error }) => {
-    let _ = bridge_ev_tx.send(BridgeEvent::ToolEnd {
-        tool_name: String::new(),  // data loss
-        tool_id: id,
-        result: output,
-        is_error,
-    }).await;
-}
+let _guard = env_test_mutex().lock().unwrap_or_else(|p| p.into_inner());
 ```
 
-**Fix:** Add a `name` field to `BridgeOutbound::ToolEnd` and propagate it:
-```rust
-// BridgeOutbound enum:
-ToolEnd {
-    id: String,
-    name: String,
-    output: String,
-    is_error: bool,
-},
-
-// run_bridge_loop mapping:
-Some(BridgeOutbound::ToolEnd { id, name, output, is_error }) => {
-    let _ = bridge_ev_tx.send(BridgeEvent::ToolEnd {
-        tool_name: name,
-        tool_id: id,
-        result: output,
-        is_error,
-    }).await;
-}
-```
-
----
-
-### WR-04: `truncate_middle` mixes display-width and character-count — overflows layout for wide characters
-
-**File:** `crates/tui/src/render.rs:170-180`
-
-**Issue:** `keep_each_side` is derived from `max_width` (measured in terminal display columns), but `text.chars().take(keep_each_side)` selects by Unicode scalar count. For text containing wide characters (CJK, fullwidth, emoji with display width 2), each character consumes 2 display columns. With 20 wide characters and `max_width = 20`, `keep_each_side = 9`, the resulting string is `9*2 + 1 + 9*2 = 37` columns wide — nearly double `max_width` — causing the string to overflow its TUI layout cell and corrupt adjacent panels.
-
-```rust
-let keep_each_side = (max_width.saturating_sub(1)) / 2; // display-width budget
-let left: String = text.chars().take(keep_each_side).collect(); // char-count — wrong for wide chars
-```
-
-**Fix:** Accumulate characters while tracking display width:
-```rust
-fn take_chars_by_width(s: &str, budget: usize) -> String {
-    let mut out = String::new();
-    let mut used = 0;
-    for ch in s.chars() {
-        let w = UnicodeWidthStr::width(ch.encode_utf8(&mut [0u8; 4]));
-        if used + w > budget { break; }
-        out.push(ch);
-        used += w;
-    }
-    out
-}
-// In truncate_middle:
-let left = take_chars_by_width(text, keep_each_side);
-let right_chars: Vec<char> = text.chars().rev().collect();
-let right_rev: String = right_chars.iter().collect();
-let right = take_chars_by_width(&right_rev, keep_each_side)
-    .chars().rev().collect::<String>();
-format!("{left}\u{2026}{right}")
-```
+**Fix (option B — align with bearer_auth.rs pattern):**
+Replace the hand-rolled mutex guard with `#[serial]` from `serial_test` (add `serial_test` to `[dev-dependencies]` in the `cli` crate's `Cargo.toml` and annotate each env-sensitive test with `#[serial]`).
 
 ---
 
 ## Info
 
-### IN-01: `CLAUDE_ORANGE` constant is pink/magenta, not orange
+### IN-01: Dead variable `bare_name` — computed but not used for dispatch
 
-**File:** `crates/tui/src/theme_colors.rs:10`
+**File:** `crates/cli/src/main.rs:86-91`
 
-**Issue:** The constant `CLAUDE_ORANGE` is defined as `Color::Rgb(233, 30, 99)`, which is a deep pink/magenta. The doc comment correctly identifies it as "brand pink/magenta". The name `CLAUDE_ORANGE` is misleading and creates confusion when tracing UI color choices or searching for orange-colored elements.
+**Issue:** `bare_name` strips the server-name prefix from `self.tool_def.name`, but `manager.call_tool(...)` on line 95 is called with `&self.tool_def.name` (the full prefixed name). The stripping has no effect on dispatch. `bare_name` is only used in the `Err` branch for the error message, so either the dispatch call should use `bare_name`, or the variable should be renamed `bare_name_for_error` with a comment to clarify intent.
 
-**Fix:** Rename to `CLAUDE_PINK` or `CLAURST_ACCENT` and update all use sites in `render.rs` and `messages/mod.rs`.
-
----
-
-### IN-02: `PermissionResponseKind::AllowSession` is dead code — never produced by `run_bridge_loop`
-
-**File:** `crates/bridge/src/lib.rs:1269`
-
-**Issue:** The only producer of `PermissionResponseKind` values is the `PermissionDecision` mapping in `run_bridge_loop` (lines 1493–1499), which only maps to `Allow` and `Deny`. The `AllowSession` variant is never emitted, making it unreachable dead code. Downstream match arms for `AllowSession` can never execute.
-
-**Fix:** Either remove `AllowSession` from the enum, or explicitly map `PermissionDecision::AllowPermanently` to `PermissionResponseKind::AllowSession` if the session-scoped allow semantics are intentional.
-
----
-
-### IN-03: Tautological assertion in `test_jwt_decode_invalid` — always passes
-
-**File:** `crates/bridge/src/lib.rs:1652`
-
-**Issue:** The second assertion is always `true`:
+**Fix:**
 ```rust
-assert!(JwtClaims::decode("only.two").is_ok() == false || true);
-// Equivalent to: assert!(true)
-```
-The `|| true` makes the condition vacuous — it passes regardless of what the function returns. The test exercises no code path and provides no safety net against regressions.
+// Rename to document intent:
+let bare_name_for_error = self
+    .tool_def
+    .name
+    .strip_prefix(&prefix)
+    .unwrap_or(&self.tool_def.name);
 
-**Fix:** Replace with a meaningful check:
-```rust
-// "only.two" has no valid base64url payload — should either error or parse to empty claims.
-// At minimum verify it does not panic (no assert needed), or assert the error case:
-assert!(
-    JwtClaims::decode("only.two").is_err(),
-    "two-segment token with non-base64url payload should be rejected"
-);
+// …
+Err(e) => ToolResult::error(format!("MCP tool '{}' failed: {}", bare_name_for_error, e)),
 ```
 
 ---
 
-_Reviewed: 2026-05-08_
+_Reviewed: 2026-05-08T00:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
