@@ -1259,18 +1259,11 @@ impl SlashCommand for StatusCommand {
 
     async fn execute(&self, _args: &str, ctx: &mut CommandContext) -> CommandResult {
         // Auth status
-        let auth_status = match claurst_core::oauth::OAuthTokens::load().await {
-            Some(tokens) => {
-                let sub = tokens.subscription_type.as_deref().unwrap_or("oauth");
-                format!("Authenticated ({})", sub)
-            }
-            None => {
-                if ctx.config.resolve_api_key().is_some() {
-                    "Authenticated (API key)".to_string()
-                } else {
-                    "Not authenticated".to_string()
-                }
-            }
+        let auth_status = match ctx.config.resolve_anthropic_auth_async().await {
+            Ok(Some((_, true))) => "Authenticated (Bearer token)".to_string(),
+            Ok(Some((_, false))) => "Authenticated (API key)".to_string(),
+            Ok(None) => "Not authenticated".to_string(),
+            Err(_) => "Not authenticated".to_string(),
         };
 
         // MCP status
@@ -8593,6 +8586,12 @@ mod tests {
 
     // ---- StatusCommand auth label tests ------------------------------------
 
+    /// Mutex to serialize env-var-sensitive tests (env vars are process-global).
+    fn env_test_mutex() -> &'static std::sync::Mutex<()> {
+        static MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        MUTEX.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     /// Run StatusCommand::execute and return the auth line from the output.
     async fn status_auth_line(ctx: &mut CommandContext) -> String {
         let cmd = find_command("status").expect("status command must exist");
@@ -8614,6 +8613,7 @@ mod tests {
     async fn test_status_bearer_token_shows_authenticated_bearer() {
         // RED: currently shows "Not authenticated" because old code uses resolve_api_key only.
         // After fix: must show "Authenticated (Bearer token)".
+        let _guard = env_test_mutex().lock().unwrap();
         let mut ctx = make_ctx();
         // Ensure no conflicting env vars
         std::env::remove_var("ANTHROPIC_API_KEY");
@@ -8629,6 +8629,7 @@ mod tests {
     #[tokio::test]
     async fn test_status_api_key_shows_authenticated_api_key() {
         // Regression guard: API key path must still show "Authenticated (API key)".
+        let _guard = env_test_mutex().lock().unwrap();
         let mut ctx = make_ctx();
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test");
@@ -8643,6 +8644,7 @@ mod tests {
     #[tokio::test]
     async fn test_status_no_credentials_shows_not_authenticated() {
         // Regression guard: no credentials must show "Not authenticated".
+        let _guard = env_test_mutex().lock().unwrap();
         let mut ctx = make_ctx();
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
