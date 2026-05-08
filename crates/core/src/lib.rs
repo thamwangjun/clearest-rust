@@ -3568,10 +3568,7 @@ pub mod oauth {
     pub fn generate_code_verifier() -> String {
         use base64::Engine;
         let mut bytes = [0u8; 32];
-        let u1 = uuid::Uuid::new_v4();
-        let u2 = uuid::Uuid::new_v4();
-        bytes[..16].copy_from_slice(u1.as_bytes());
-        bytes[16..].copy_from_slice(u2.as_bytes());
+        getrandom::getrandom(&mut bytes).expect("OS CSPRNG unavailable");
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
     }
 
@@ -3587,10 +3584,7 @@ pub mod oauth {
     pub fn generate_state() -> String {
         use base64::Engine;
         let mut bytes = [0u8; 32];
-        let u1 = uuid::Uuid::new_v4();
-        let u2 = uuid::Uuid::new_v4();
-        bytes[..16].copy_from_slice(u1.as_bytes());
-        bytes[16..].copy_from_slice(u2.as_bytes());
+        getrandom::getrandom(&mut bytes).expect("OS CSPRNG unavailable");
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
     }
 
