@@ -942,8 +942,7 @@ async fn refresh_provider_runtime_state(
     let (api_key, use_bearer_auth) = config
         .resolve_anthropic_auth_async()
         .await
-        .ok()
-        .flatten()
+        .context("Failed to resolve auth credentials during /refresh")?
         .unwrap_or((String::new(), false));
     let client_config = claurst_api::client::ClientConfig {
         api_key,
