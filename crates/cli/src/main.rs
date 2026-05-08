@@ -2575,15 +2575,25 @@ async fn run_interactive(
                             });
                             bridge_session_info = Some(info.clone());
 
+                            // Shared HTTP client — cloned into each spawned task so all
+                            // bridge API calls reuse a single connection pool.
+                            let bridge_http = reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_secs(35))
+                                .user_agent(format!("claude-code-rust/{}", env!("CARGO_PKG_VERSION")))
+                                .build()
+                                .unwrap_or_default();
+
                             // Relay consumer: moves relay_ev_rx (taken from the Option)
                             // into a background task that calls post_bridge_event per item.
                             if let Some(rx) = relay_ev_rx_opt.take() {
                                 let info_relay = info.clone();
+                                let http_relay = bridge_http.clone();
                                 tokio::spawn(async move {
                                     let mut rx = rx;
                                     while let Some(payload) = rx.recv().await {
                                         let _ = claurst_bridge::post_bridge_event(
                                             &info_relay,
+                                            &http_relay,
                                             payload,
                                         )
                                         .await;
@@ -2595,11 +2605,13 @@ async fn run_interactive(
                             // forwards inbound user messages to remote_prompt_tx.
                             let info_poll = info.clone();
                             let poll_tx = remote_prompt_tx.clone();
+                            let http_poll = bridge_http.clone();
                             tokio::spawn(async move {
                                 let mut since_id: Option<String> = None;
                                 loop {
                                     match claurst_bridge::poll_bridge_messages(
                                         &info_poll,
+                                        &http_poll,
                                         since_id.as_deref(),
                                     )
                                     .await

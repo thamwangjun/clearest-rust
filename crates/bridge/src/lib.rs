@@ -1049,6 +1049,7 @@ pub async fn start_bridge_session(
 /// body).
 pub async fn poll_bridge_messages(
     info: &BridgeSessionInfo,
+    http: &reqwest::Client,
     since_id: Option<&str>,
 ) -> anyhow::Result<Vec<SimpleMessage>> {
     let server_url = std::env::var("CLAURST_BRIDGE_URL")
@@ -1062,12 +1063,6 @@ pub async fn poll_bridge_messages(
         "{}/api/bridge/sessions/{}/messages",
         server_url, info.session_id
     );
-
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(35))
-        .user_agent(format!("claude-code-rust/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .context("poll_bridge_messages: failed to build HTTP client")?;
 
     // Retry loop for 429 back-off.
     let max_retries = 3u32;
@@ -1125,6 +1120,7 @@ pub async fn poll_bridge_messages(
 /// a JSON body `{"content": "<response>", "done": true}`.
 pub async fn post_bridge_response(
     info: &BridgeSessionInfo,
+    http: &reqwest::Client,
     msg_id: &str,
     content: &str,
     done: bool,
@@ -1141,12 +1137,6 @@ pub async fn post_bridge_response(
         "{}/api/bridge/sessions/{}/messages/{}/response",
         server_url, info.session_id, msg_id
     );
-
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent(format!("claude-code-rust/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .context("post_bridge_response: failed to build HTTP client")?;
 
     let body = serde_json::json!({
         "content": content,
@@ -1192,6 +1182,7 @@ pub async fn post_bridge_response(
 /// ignore them so the query loop is never blocked.
 pub async fn post_bridge_event(
     info: &BridgeSessionInfo,
+    http: &reqwest::Client,
     payload: String,
 ) -> anyhow::Result<()> {
     let server_url = std::env::var("CLAURST_BRIDGE_URL")
@@ -1205,12 +1196,6 @@ pub async fn post_bridge_event(
         "{}/api/bridge/sessions/{}/events",
         server_url, info.session_id
     );
-
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .user_agent(format!("claude-code-rust/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .context("post_bridge_event: failed to build HTTP client")?;
 
     let body = serde_json::json!({
         "event": payload,
