@@ -152,7 +152,7 @@ pub fn device_fingerprint() -> String {
 /// Built either from env vars via [`BridgeConfig::from_env`] or manually
 /// by the caller. The bridge is only active when both `enabled` is `true`
 /// **and** a `session_token` is present (see [`BridgeConfig::is_active`]).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BridgeConfig {
     /// Whether the bridge feature is turned on.
     pub enabled: bool,
@@ -184,6 +184,23 @@ impl Default for BridgeConfig {
             session_timeout_ms: 24 * 60 * 60 * 1_000,
             runner_version: env!("CARGO_PKG_VERSION").to_string(),
         }
+    }
+}
+
+/// Manual Debug implementation that redacts `session_token` to prevent
+/// bearer tokens (OAuth access tokens) from appearing in logs.
+impl std::fmt::Debug for BridgeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BridgeConfig")
+            .field("enabled", &self.enabled)
+            .field("server_url", &self.server_url)
+            .field("device_id", &self.device_id)
+            .field("session_token", &self.session_token.as_ref().map(|_| "<redacted>"))
+            .field("polling_interval_ms", &self.polling_interval_ms)
+            .field("max_reconnect_attempts", &self.max_reconnect_attempts)
+            .field("session_timeout_ms", &self.session_timeout_ms)
+            .field("runner_version", &self.runner_version)
+            .finish()
     }
 }
 
