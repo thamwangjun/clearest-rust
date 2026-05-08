@@ -8590,4 +8590,66 @@ mod tests {
             ]
         );
     }
+
+    // ---- StatusCommand auth label tests ------------------------------------
+
+    /// Run StatusCommand::execute and return the auth line from the output.
+    async fn status_auth_line(ctx: &mut CommandContext) -> String {
+        let cmd = find_command("status").expect("status command must exist");
+        let result = cmd.execute("", ctx).await;
+        match result {
+            CommandResult::Message(msg) => {
+                // Extract the "Auth:" line
+                msg.lines()
+                    .find(|l| l.contains("Auth:"))
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            }
+            _ => String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_status_bearer_token_shows_authenticated_bearer() {
+        // RED: currently shows "Not authenticated" because old code uses resolve_api_key only.
+        // After fix: must show "Authenticated (Bearer token)".
+        let mut ctx = make_ctx();
+        // Ensure no conflicting env vars
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::set_var("ANTHROPIC_AUTH_TOKEN", "test_bearer_value");
+        let auth_line = status_auth_line(&mut ctx).await;
+        std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
+        assert!(
+            auth_line.contains("Authenticated (Bearer token)"),
+            "Expected 'Authenticated (Bearer token)' but got: {auth_line}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_status_api_key_shows_authenticated_api_key() {
+        // Regression guard: API key path must still show "Authenticated (API key)".
+        let mut ctx = make_ctx();
+        std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test");
+        let auth_line = status_auth_line(&mut ctx).await;
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        assert!(
+            auth_line.contains("Authenticated (API key)"),
+            "Expected 'Authenticated (API key)' but got: {auth_line}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_status_no_credentials_shows_not_authenticated() {
+        // Regression guard: no credentials must show "Not authenticated".
+        let mut ctx = make_ctx();
+        std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let auth_line = status_auth_line(&mut ctx).await;
+        assert!(
+            auth_line.contains("Not authenticated"),
+            "Expected 'Not authenticated' but got: {auth_line}"
+        );
+    }
 }
