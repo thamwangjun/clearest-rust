@@ -1328,18 +1328,18 @@ pub fn render_hook_progress(command: &str, last_line: Option<&str>) -> Vec<Line<
 }
 
 fn truncate_user_prompt_text(text: &str) -> String {
-    if text.len() <= MAX_USER_PROMPT_DISPLAY_CHARS {
+    let char_count = text.chars().count();
+    if char_count <= MAX_USER_PROMPT_DISPLAY_CHARS {
         return text.to_string();
     }
 
-    let head = &text[..TRUNCATE_USER_PROMPT_HEAD_CHARS.min(text.len())];
-    let tail_start = text.len().saturating_sub(TRUNCATE_USER_PROMPT_TAIL_CHARS);
-    let tail = &text[tail_start..];
-    let head_newlines = text
+    let head: String = text.chars().take(TRUNCATE_USER_PROMPT_HEAD_CHARS).collect();
+    let tail: String = text
         .chars()
-        .take(TRUNCATE_USER_PROMPT_HEAD_CHARS)
-        .filter(|c| *c == '\n')
-        .count();
+        .skip(char_count.saturating_sub(TRUNCATE_USER_PROMPT_TAIL_CHARS))
+        .collect();
+
+    let head_newlines = head.chars().filter(|c| *c == '\n').count();
     let tail_newlines = tail.chars().filter(|c| *c == '\n').count();
     let total_newlines = text.chars().filter(|c| *c == '\n').count();
     let hidden_lines = total_newlines.saturating_sub(head_newlines + tail_newlines);
