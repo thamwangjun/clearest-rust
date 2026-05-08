@@ -3325,14 +3325,7 @@ async fn auth_status(json_output: bool) {
         None
     };
 
-    let env_api_key_source = claurst_core::config::api_key_env_vars_for_provider(active_provider)
-        .iter()
-        .find_map(|env_var| {
-            std::env::var(env_var)
-                .ok()
-                .filter(|value| !value.is_empty())
-                .map(|_| (*env_var).to_string())
-        });
+    let env_api_key_source = detect_api_key_env_source(active_provider);
     let stored_api_key_source = provider_status_lookup_keys(active_provider)
         .into_iter()
         .find_map(|provider_id| match auth_store.get(provider_id) {
@@ -3548,6 +3541,104 @@ fn json_null_or_string(opt: &Option<String>) -> serde_json::Value {
     match opt {
         Some(s) => serde_json::Value::String(s.clone()),
         None => serde_json::Value::Null,
+    }
+}
+
+/// Detect the API key source env var for the active provider, including the bearer token
+/// fallback for Anthropic (`ANTHROPIC_AUTH_TOKEN`).
+///
+/// Returns the env var name (e.g. `"ANTHROPIC_API_KEY"` or `"ANTHROPIC_AUTH_TOKEN"`) if a
+/// non-empty value is set, otherwise `None`.
+fn detect_api_key_env_source(active_provider: &str) -> Option<String> {
+    let env_api_key_source = claurst_core::config::api_key_env_vars_for_provider(active_provider)
+        .iter()
+        .find_map(|env_var| {
+            std::env::var(env_var)
+                .ok()
+                .filter(|value| !value.is_empty())
+                .map(|_| (*env_var).to_string())
+        });
+    // Bearer token fallback for Anthropic: if no standard API key env var is set, check
+    // ANTHROPIC_AUTH_TOKEN.  This env var is not in api_key_env_vars_for_provider because
+    // it uses a different auth scheme (Bearer vs x-api-key), but the CLI status display
+    // should treat it as a valid "logged in" credential source.
+    if env_api_key_source.is_none() && active_provider == "anthropic" {
+        std::env::var("ANTHROPIC_AUTH_TOKEN")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map(|_| "ANTHROPIC_AUTH_TOKEN".to_string())
+    } else {
+        env_api_key_source
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mutex to serialise env-var-sensitive tests (env vars are process-global).
+    fn env_test_mutex() -> &'static std::sync::Mutex<()> {
+        static MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        MUTEX.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    // ---- detect_api_key_env_source tests ------------------------------------
+
+    #[test]
+    fn test_detect_bearer_token_when_only_auth_token_set() {
+        // RED: before fix, ANTHROPIC_AUTH_TOKEN is invisible to env source detection.
+        // After fix: detect_api_key_env_source("anthropic") == Some("ANTHROPIC_AUTH_TOKEN").
+        let _guard = env_test_mutex().lock().unwrap();
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::set_var("ANTHROPIC_AUTH_TOKEN", "test_bearer_value");
+        let result = detect_api_key_env_source("anthropic");
+        std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
+        assert_eq!(
+            result,
+            Some("ANTHROPIC_AUTH_TOKEN".to_string()),
+            "Expected Some(ANTHROPIC_AUTH_TOKEN) when bearer token is set without API key"
+        );
+    }
+
+    #[test]
+    fn test_detect_api_key_env_source_prefers_api_key_over_auth_token() {
+        // When ANTHROPIC_API_KEY is set, it wins (bearer token is not set simultaneously
+        // in valid configs, but even if it were the API key path takes precedence here).
+        let _guard = env_test_mutex().lock().unwrap();
+        std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test");
+        let result = detect_api_key_env_source("anthropic");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        assert_eq!(
+            result,
+            Some("ANTHROPIC_API_KEY".to_string()),
+            "Expected Some(ANTHROPIC_API_KEY) when API key is set"
+        );
+    }
+
+    #[test]
+    fn test_detect_api_key_env_source_none_when_neither_set() {
+        // Regression guard: no credentials → None.
+        let _guard = env_test_mutex().lock().unwrap();
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
+        let result = detect_api_key_env_source("anthropic");
+        assert_eq!(
+            result,
+            None,
+            "Expected None when neither env var is set"
+        );
+    }
+
+    #[test]
+    fn test_detect_api_key_env_source_non_anthropic_ignores_auth_token() {
+        // For non-Anthropic providers, ANTHROPIC_AUTH_TOKEN must not be detected.
+        let _guard = env_test_mutex().lock().unwrap();
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::set_var("ANTHROPIC_AUTH_TOKEN", "test_bearer_value");
+        let result = detect_api_key_env_source("openai");
+        std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
+        assert_eq!(result, None, "ANTHROPIC_AUTH_TOKEN should not be visible to non-Anthropic providers");
     }
 }
 
