@@ -3440,7 +3440,7 @@ async fn auth_status(json_output: bool) {
     } else {
         if !logged_in {
             let hint = if active_provider == "anthropic" {
-                "Run `claude auth login` or set ANTHROPIC_API_KEY.".to_string()
+                "Run `claude auth login`, set ANTHROPIC_API_KEY, or set ANTHROPIC_AUTH_TOKEN.".to_string()
             } else if let Some(env_var) =
                 claurst_core::config::primary_api_key_env_var_for_provider(active_provider)
             {
