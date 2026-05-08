@@ -3336,6 +3336,28 @@ async fn auth_status(json_output: bool) {
         None
     };
 
+    // Conflict detection: both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are set.
+    // The resolver (resolve_anthropic_auth_async) enforces mutual exclusion; mirror
+    // that check here so auth_status() also errors instead of silently picking one.
+    if active_provider == "anthropic" {
+        let has_api_key = std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .is_some();
+        let has_auth_token = std::env::var("ANTHROPIC_AUTH_TOKEN")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .is_some();
+        if has_api_key && has_auth_token {
+            eprintln!(
+                "Error: ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are both set; \
+                 these are mutually exclusive (x-api-key vs Bearer auth). \
+                 Unset one to continue."
+            );
+            std::process::exit(1);
+        }
+    }
+
     let env_api_key_source = detect_api_key_env_source(active_provider);
     let stored_api_key_source = provider_status_lookup_keys(active_provider)
         .into_iter()

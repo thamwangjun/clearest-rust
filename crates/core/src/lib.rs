@@ -851,7 +851,9 @@ pub mod config {
     // ---- ProviderConfig --------------------------------------------------
 
     /// Per-provider configuration: API keys, base URLs, and options.
+    /// Unknown fields in settings.json are a hard parse error (`deny_unknown_fields`).
     #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
     pub struct ProviderConfig {
         /// API key (overrides environment variable)
         pub api_key: Option<String>,
@@ -869,11 +871,6 @@ pub mod config {
         /// Provider-specific options (passed through to provider implementation)
         #[serde(default)]
         pub options: HashMap<String, serde_json::Value>,
-        /// When Some(true), force Bearer auth (Authorization: Bearer <token>) instead of x-api-key.
-        /// Mutually exclusive with api_key in this config and ANTHROPIC_API_KEY env var.
-        /// Default is None (no opinion — resolver uses env var names to determine mode).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub use_bearer_auth: Option<bool>,
     }
 
     impl Default for ProviderConfig {
@@ -885,7 +882,6 @@ pub mod config {
                 models_whitelist: Vec::new(),
                 models_blacklist: Vec::new(),
                 options: HashMap::new(),
-                use_bearer_auth: None,
             }
         }
     }
@@ -1266,7 +1262,7 @@ pub mod config {
         }
 
         /// Async variant: also checks `~/.claurst/oauth_tokens.json`.
-        /// Returns `(credential, use_bearer_auth)`.
+        /// Returns `(credential, use_bearer)` where `use_bearer` is true for Bearer auth.
         /// - For Console OAuth flow: credential is the stored API key, bearer=false.
         /// - For Claude.ai OAuth flow: credential is the access token, bearer=true.
         /// Silently attempts token refresh when the access token is expired.
@@ -1280,9 +1276,6 @@ pub mod config {
 
         pub async fn resolve_anthropic_auth_async(&self) -> anyhow::Result<Option<(String, bool)>> {
             let provider_cfg = self.provider_configs.get("anthropic");
-            let use_bearer_pinned = provider_cfg
-                .and_then(|p| p.use_bearer_auth)
-                .unwrap_or(false);
 
             let env_api_key = std::env::var("ANTHROPIC_API_KEY")
                 .ok()
@@ -1297,36 +1290,12 @@ pub mod config {
                 .as_deref()
                 .filter(|s| !s.is_empty());
 
-            // D-02 condition 1: both env vars non-empty
+            // D-02 condition 1: both env vars non-empty — conflict
             if env_api_key.is_some() && env_auth_token.is_some() {
                 anyhow::bail!(
                     "ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are both set; \
                      these are mutually exclusive (x-api-key vs Bearer auth). \
                      Unset one to continue."
-                );
-            }
-            // D-02 condition 2: bearer pin + env api key
-            if use_bearer_pinned && env_api_key.is_some() {
-                anyhow::bail!(
-                    "provider_configs.anthropic.use_bearer_auth=true conflicts with \
-                     ANTHROPIC_API_KEY env var (x-api-key mode). \
-                     Unset ANTHROPIC_API_KEY or set use_bearer_auth=false."
-                );
-            }
-            // D-02 condition 3: bearer pin + settings api_key
-            if use_bearer_pinned && provider_api_key.is_some() {
-                anyhow::bail!(
-                    "provider_configs.anthropic.use_bearer_auth=true conflicts with \
-                     provider_configs.anthropic.api_key in settings. \
-                     Remove api_key or set use_bearer_auth=false."
-                );
-            }
-            // D-02 condition 3b: bearer pin + top-level Config.api_key
-            if use_bearer_pinned && top_level_api_key.is_some() {
-                anyhow::bail!(
-                    "provider_configs.anthropic.use_bearer_auth=true conflicts with \
-                     Config.api_key (x-api-key mode). \
-                     Remove api_key or set use_bearer_auth=false."
                 );
             }
             // D-02 condition 4: top-level Config.api_key + ANTHROPIC_AUTH_TOKEN env
@@ -1337,18 +1306,21 @@ pub mod config {
                      Unset one to continue."
                 );
             }
+            // D-02 condition 5: provider api_key in settings + ANTHROPIC_AUTH_TOKEN env
+            if provider_api_key.is_some() && env_auth_token.is_some() {
+                anyhow::bail!(
+                    "anthropic.api_key in settings and ANTHROPIC_AUTH_TOKEN are both set; \
+                     these are mutually exclusive. Remove one to continue."
+                );
+            }
 
-            // Priority 1: explicit bearer pin — return token or None (do NOT fall through to api key)
-            if use_bearer_pinned {
-                return Ok(env_auth_token.map(|t| (t, true)));
+            // Priority 1: ANTHROPIC_AUTH_TOKEN env — bearer path, checked before x-api-key
+            if let Some(t) = env_auth_token {
+                return Ok(Some((t, true)));
             }
             // Priority 2: x-api-key path (provider_configs.api_key → ANTHROPIC_API_KEY env → top-level api_key)
             if let Some(key) = self.resolve_anthropic_api_key() {
                 return Ok(Some((key, false)));
-            }
-            // Priority 3: bare ANTHROPIC_AUTH_TOKEN env (no pin, no api key configured)
-            if let Some(t) = env_auth_token {
-                return Ok(Some((t, true)));
             }
             // Priority 4: OAuth tokens (unchanged logic, returns wrapped in Ok)
             let tokens = match crate::oauth::OAuthTokens::load().await {

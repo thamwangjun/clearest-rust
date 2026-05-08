@@ -63,77 +63,23 @@ async fn both_env_vars_set_errors() {
 }
 
 // ---------------------------------------------------------------------------
-// D-09 case 3: use_bearer_auth=true + ANTHROPIC_API_KEY env → Err
+// D-02 condition 5: provider api_key in settings + ANTHROPIC_AUTH_TOKEN → Err
 // ---------------------------------------------------------------------------
 #[tokio::test]
 #[serial]
-async fn pin_bearer_with_env_api_key_errors() {
+async fn provider_api_key_with_auth_token_errors() {
     reset_anthropic_env();
-    std::env::set_var("ANTHROPIC_API_KEY", "sk-test-pinconflict");
-
-    let cfg = anthropic_config_with(ProviderConfig {
-        use_bearer_auth: Some(true),
-        ..ProviderConfig::default()
-    });
-    let err = cfg.resolve_anthropic_auth_async().await.unwrap_err();
-
-    assert!(
-        err.to_string().contains("use_bearer_auth"),
-        "expected error to mention use_bearer_auth, got: {}",
-        err
-    );
-
-    reset_anthropic_env();
-}
-
-// ---------------------------------------------------------------------------
-// D-09 case 4: use_bearer_auth=true + provider api_key in settings → Err
-// ---------------------------------------------------------------------------
-#[tokio::test]
-#[serial]
-async fn pin_bearer_with_settings_api_key_errors() {
-    reset_anthropic_env();
+    std::env::set_var("ANTHROPIC_AUTH_TOKEN", "btr-conflict");
 
     let cfg = anthropic_config_with(ProviderConfig {
         api_key: Some("sk-from-settings".into()),
-        use_bearer_auth: Some(true),
         ..ProviderConfig::default()
     });
     let err = cfg.resolve_anthropic_auth_async().await.unwrap_err();
-
+    let msg = err.to_string();
     assert!(
-        err.to_string().contains("use_bearer_auth"),
-        "expected error to mention use_bearer_auth, got: {}",
-        err
-    );
-
-    reset_anthropic_env();
-}
-
-// ---------------------------------------------------------------------------
-// CR-01: use_bearer_auth=true + top-level Config.api_key → Err
-// ---------------------------------------------------------------------------
-#[tokio::test]
-#[serial]
-async fn pin_bearer_with_top_level_api_key_errors() {
-    reset_anthropic_env();
-
-    let mut cfg = Config::default();
-    cfg.provider = Some("anthropic".into());
-    cfg.api_key = Some("sk-top-level-key".into());
-    cfg.provider_configs.insert(
-        "anthropic".into(),
-        ProviderConfig {
-            use_bearer_auth: Some(true),
-            ..ProviderConfig::default()
-        },
-    );
-    let err = cfg.resolve_anthropic_auth_async().await.unwrap_err();
-
-    assert!(
-        err.to_string().contains("use_bearer_auth"),
-        "expected error to mention use_bearer_auth, got: {}",
-        err
+        msg.contains("anthropic.api_key") && msg.contains("ANTHROPIC_AUTH_TOKEN"),
+        "expected error to name both sources, got: {msg}"
     );
 
     reset_anthropic_env();
@@ -162,23 +108,6 @@ async fn config_env_injection_resolves_bearer() {
 
     assert_eq!(res, Some(("btr-from-settings".to_string(), true)));
 
-    reset_anthropic_env();
-}
-
-// ---------------------------------------------------------------------------
-// WR-03: use_bearer_auth=true pinned with no token available returns None
-// ---------------------------------------------------------------------------
-#[tokio::test]
-#[serial]
-async fn pin_bearer_with_no_token_returns_none() {
-    reset_anthropic_env();
-    // No ANTHROPIC_AUTH_TOKEN set, no OAuth tokens on disk
-    let cfg = anthropic_config_with(ProviderConfig {
-        use_bearer_auth: Some(true),
-        ..ProviderConfig::default()
-    });
-    let res = cfg.resolve_anthropic_auth_async().await.unwrap();
-    assert_eq!(res, None);
     reset_anthropic_env();
 }
 
