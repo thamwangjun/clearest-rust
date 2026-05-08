@@ -2,78 +2,64 @@
 phase: 03-anthropic-auth-token-bearer-auth-support
 fixed_at: 2026-05-08T00:00:00Z
 review_path: .planning/phases/03-anthropic-auth-token-bearer-auth-support/03-REVIEW.md
-fix_scope: all
-findings_in_scope: 7
-fixed: 7
-skipped: 0
 iteration: 1
+findings_in_scope: 6
+fixed: 6
+skipped: 0
 status: all_fixed
 ---
 
 # Phase 03: Code Review Fix Report
 
-**Fixed at:** 2026-05-08
+**Fixed at:** 2026-05-08T00:00:00Z
 **Source review:** .planning/phases/03-anthropic-auth-token-bearer-auth-support/03-REVIEW.md
 **Iteration:** 1
 
-## Summary
-
-All 7 findings (2 critical, 4 warnings, 1 info) were fixed. Each fix was verified to compile cleanly via `cargo check --workspace` and committed atomically. The fixes close a silent auth conflict gap, propagate actionable error messages at three call sites, redact bearer tokens from debug output, and add two missing test cases.
-
-- Findings in scope: 7
-- Fixed: 7
+**Summary:**
+- Findings in scope: 6
+- Fixed: 6
 - Skipped: 0
 
 ## Fixed Issues
 
-### CR-01: Config.api_key + ANTHROPIC_AUTH_TOKEN env conflict goes undetected
+### CR-01: Missing conflict guard — `use_bearer_pinned=true` + `Config.api_key`
+
+**Files modified:** `crates/core/src/lib.rs`, `crates/core/tests/bearer_auth.rs`
+**Commit:** 567a186
+**Applied fix:** Added D-02 condition 3b between conditions 3 and 4 in `resolve_anthropic_auth_async`: `if use_bearer_pinned && top_level_api_key.is_some()` bails with an actionable error. Added corresponding test `pin_bearer_with_top_level_api_key_errors` to `bearer_auth.rs` that sets `cfg.api_key = Some("sk-top-level-key".into())` alongside `use_bearer_auth: Some(true)` and asserts the error message contains "use_bearer_auth".
+
+### CR-02: Weak entropy in PKCE code verifier and OAuth state generators
 
 **Files modified:** `crates/core/src/lib.rs`
-**Commit:** a4a5e24
-**Applied fix:** Added `top_level_api_key` capture alongside `env_api_key`/`provider_api_key` at the top of `resolve_anthropic_auth_async()`, then added a fourth guard (D-02 condition 4) that bails with an actionable error message when both `Config.api_key` and `ANTHROPIC_AUTH_TOKEN` are simultaneously set. Previously this case silently fell through to x-api-key mode.
+**Commit:** 4209cd8
+**Applied fix:** Replaced both `generate_code_verifier()` and `generate_state()` implementations: removed the two-UUID concatenation approach (which lost 12 bits to fixed version/variant markers) and replaced with `getrandom::getrandom(&mut bytes).expect("OS CSPRNG unavailable")` on a `[0u8; 32]` buffer, giving the full 256 bits of OS CSPRNG entropy. The `getrandom` crate was already a direct workspace dependency.
 
-### CR-02: Conflict errors silently swallowed in commands/lib.rs
+### WR-01: `StatusCommand::execute` silently masks auth conflict errors
 
 **Files modified:** `crates/commands/src/lib.rs`
-**Commit:** 196c92f
-**Applied fix:** Changed `provider_for_config()` signature from `async fn ... -> Option<...>` to `async fn ... -> anyhow::Result<Option<...>>` and replaced `.await.ok().flatten()` with `.await?`. Wrapped the existing `find_map` return in `Ok(...)`. Updated both call sites (~line 2502 code review, ~line 4307 auto-naming) to match on `Ok(Some(...))`, `Ok(None)`, and `Err(e)` — surfacing auth errors with actionable messages. Fixed `/status` call site (~line 1963) with a `match` that pushes `ERROR: {e}` into the status lines instead of swallowing the error.
+**Commit:** 6c2a3e9
+**Applied fix:** Changed the `Err(_)` match arm in `StatusCommand::execute` at line 1266 to `Err(e) => format!("Auth error: {e}")` so conflict errors (e.g. "ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are both set") surface in the `/status` output instead of being swallowed as "Not authenticated".
 
-### WR-01: Silent error swallow in refresh_provider_runtime_state
+### WR-02: `auth_status` "not logged in" hint omits `ANTHROPIC_AUTH_TOKEN`
 
 **Files modified:** `crates/cli/src/main.rs`
-**Commit:** 1fb74b2
-**Applied fix:** Replaced `.await.ok().flatten().unwrap_or((String::new(), false))` with `.await.context("Failed to resolve auth credentials during /refresh")?.unwrap_or((String::new(), false))`. Auth conflict errors during `/refresh` now propagate up and fail the operation with an actionable message.
+**Commit:** 2deded3
+**Applied fix:** Updated the hint string at line 3443 from `"Run \`claude auth login\` or set ANTHROPIC_API_KEY."` to `"Run \`claude auth login\`, set ANTHROPIC_API_KEY, or set ANTHROPIC_AUTH_TOKEN."` so users with a bearer token but no API key receive actionable guidance.
 
-### WR-02: BridgeConfig derives Debug exposing session_token in logs
+### WR-03: `env_test_mutex` in `main.rs` unit tests uses a poisonable mutex
 
-**Files modified:** `crates/bridge/src/lib.rs`
-**Commit:** 02c975c
-**Applied fix:** Removed `Debug` from the `#[derive(...)]` on `BridgeConfig` and added a manual `impl std::fmt::Debug for BridgeConfig` that lists all fields but shows `session_token` as `Some("<redacted>")` or `None` (using `.as_ref().map(|_| "<redacted>")`), preventing bearer/OAuth tokens from appearing in debug logs.
+**Files modified:** `crates/cli/src/main.rs`
+**Commit:** 562260a
+**Applied fix:** Applied option A — replaced all four `.lock().unwrap()` call sites in the test module with `.lock().unwrap_or_else(|p| p.into_inner())`. If any test panics while holding the lock the mutex is poisoned; subsequent tests now recover the inner guard rather than propagating spurious panics.
 
-### WR-03: Missing test for bearer-pinned config with no token available
+### IN-01: Dead variable `bare_name` — computed but not used for dispatch
 
-**Files modified:** `crates/core/tests/bearer_auth.rs`
-**Commit:** d1610bf
-**Applied fix:** Added `pin_bearer_with_no_token_returns_none` test that calls `reset_anthropic_env()`, constructs a config with `use_bearer_auth: Some(true)`, and asserts `resolve_anthropic_auth_async().await.unwrap()` returns `None` (no panic, no error) when neither `ANTHROPIC_AUTH_TOKEN` nor OAuth tokens are present.
-
-### WR-04: Missing test for injection guard preserving pre-existing env value
-
-**Files modified:** `crates/core/tests/bearer_auth.rs`
-**Commit:** 5598b2d
-**Applied fix:** Added `config_env_injection_does_not_overwrite_existing_env` test that pre-sets `ANTHROPIC_AUTH_TOKEN` to `"btr-from-real-env"`, runs the injection loop simulation with `"btr-from-settings"`, and asserts the resolver returns the pre-existing real-env value. Validates the `is_err()` guard in the injection loop correctly defers to environment values over settings values.
-
-### IN-01: serial_test pinned to major version without minor constraint
-
-**Files modified:** `crates/core/Cargo.toml`
-**Commit:** be66999
-**Applied fix:** Changed `serial_test = "3"` to `serial_test = "3.1"` to lock in a known-good minor version for async + tokio compatibility, preventing unexpected breakage from future 3.x releases.
-
-## Skipped Issues
-
-None
+**Files modified:** `crates/cli/src/main.rs`
+**Commit:** e6cc199
+**Applied fix:** Renamed `bare_name` to `bare_name_for_error` and added a comment clarifying that dispatch uses the full prefixed name (`self.tool_def.name`) while the stripped name is intentionally reserved for the `Err` branch error message. Updated the `Err(e)` arm to use the new name.
 
 ---
 
-_Fixed: 2026-05-08_
+_Fixed: 2026-05-08T00:00:00Z_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 1_
