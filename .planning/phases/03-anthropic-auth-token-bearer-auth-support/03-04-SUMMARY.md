@@ -57,7 +57,7 @@ completed: "2026-05-08"
 - **Duration:** 5 min
 - **Started:** 2026-05-08T09:04:06Z
 - **Completed:** 2026-05-08T09:09:00Z
-- **Tasks:** 2 of 3 (Task 3 is a human-verify checkpoint — awaiting manual testing)
+- **Tasks:** 3 of 3 (Task 3 human-verify checkpoint — APPROVED by user)
 - **Files modified:** 2
 
 ## Accomplishments
@@ -118,11 +118,14 @@ None - no external service configuration required.
 
 ## Next Phase Readiness
 
-- Task 3 (checkpoint:human-verify) requires building the binary and manually testing 4 scenarios:
-  1. `ANTHROPIC_AUTH_TOKEN=x ./target/debug/claurst auth status` → "Logged in." with source "ANTHROPIC_AUTH_TOKEN"
-  2. REPL `/status` with `ANTHROPIC_AUTH_TOKEN=x` → `Auth: Authenticated (Bearer token)`
-  3. `ANTHROPIC_API_KEY=sk-ant-test ./target/debug/claurst auth status` → unchanged behaviour
-  4. No env vars → "Not logged in for Anthropic."
+All four UAT scenarios verified and approved by user:
+
+1. `ANTHROPIC_AUTH_TOKEN=x ./target/debug/claurst auth status` → "Logged in." / "API key: ANTHROPIC_AUTH_TOKEN" — PASSED
+2. REPL `/status` with `ANTHROPIC_AUTH_TOKEN=x` → `Auth: Authenticated (Bearer token)` — PASSED
+3. `ANTHROPIC_API_KEY=sk-ant-test ./target/debug/claurst auth status` → unchanged behaviour — PASSED
+4. No env vars → "Not logged in for Anthropic." — PASSED
+
+Bearer auth status display is complete. Phase 03 is fully done.
 
 ---
 *Phase: 03-anthropic-auth-token-bearer-auth-support*
