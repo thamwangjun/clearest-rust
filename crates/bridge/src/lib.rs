@@ -1622,7 +1622,8 @@ mod tests {
     #[test]
     fn test_jwt_decode_invalid() {
         assert!(JwtClaims::decode("notajwt").is_err());
-        assert!(JwtClaims::decode("only.two").is_ok() == false || true); // either way, must not panic
+        // "only.two" has 2 segments; passes length guard but "two" is not valid base64url
+        assert!(JwtClaims::decode("only.two").is_err(), "invalid base64 payload should be Err");
     }
 
     #[test]
