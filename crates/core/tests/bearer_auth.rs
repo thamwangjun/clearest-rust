@@ -137,6 +137,23 @@ async fn config_env_injection_resolves_bearer() {
 }
 
 // ---------------------------------------------------------------------------
+// WR-03: use_bearer_auth=true pinned with no token available returns None
+// ---------------------------------------------------------------------------
+#[tokio::test]
+#[serial]
+async fn pin_bearer_with_no_token_returns_none() {
+    reset_anthropic_env();
+    // No ANTHROPIC_AUTH_TOKEN set, no OAuth tokens on disk
+    let cfg = anthropic_config_with(ProviderConfig {
+        use_bearer_auth: Some(true),
+        ..ProviderConfig::default()
+    });
+    let res = cfg.resolve_anthropic_auth_async().await.unwrap();
+    assert_eq!(res, None);
+    reset_anthropic_env();
+}
+
+// ---------------------------------------------------------------------------
 // Regression: ANTHROPIC_API_KEY alone still resolves to x-api-key (false)
 // Guards against Pitfall 2 from RESEARCH.md.
 // ---------------------------------------------------------------------------
