@@ -105,3 +105,16 @@ All tasks confirmed green post-execution. No new tests required — Wave 0 test 
 | Tasks verified green | 3 |
 
 Re-audit confirmed all tests still green: 26 render_snapshots + 1 startup_routing. All three targeted tests pass (`thinking_block_collapsed`, `thinking_block_expanded`, `show_starts_at_welcome_page`). No drift from original audit.
+
+---
+
+## Validation Audit 2026-05-08 (re-audit)
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+| Tasks verified green | 3 |
+
+Re-audit confirmed all tests still green: 26 render_snapshots + 1 startup_routing. All three targeted tests pass. No drift since 2026-05-05 audits.
