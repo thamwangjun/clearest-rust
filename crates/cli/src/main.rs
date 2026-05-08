@@ -392,7 +392,13 @@ async fn main() -> anyhow::Result<()> {
         if !cmd_name.starts_with('-') && !cmd_name.starts_with('/') {
             if let Some(named_cmd) = claurst_commands::named_commands::find_named_command(cmd_name) {
                 // Build a minimal CommandContext (named commands are pre-session)
-                let settings = Settings::load().await.unwrap_or_default();
+                let settings = match Settings::load().await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        std::process::exit(2);
+                    }
+                };
                 let config = settings.effective_config();
                 let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
                 let cmd_ctx = claurst_commands::CommandContext {
@@ -3313,7 +3319,13 @@ fn format_provider_name(provider_id: &str) -> String {
 
 /// Print current auth status, then exit with code 0 (logged in) or 1 (not logged in).
 async fn auth_status(json_output: bool) {
-    let settings = Settings::load().await.unwrap_or_default();
+    let settings = match Settings::load().await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(2);
+        }
+    };
     let config = &settings.config;
     // Inject config.env into the process environment so credentials stored in
     // settings.json are visible to detect_api_key_env_source(). This mirrors the

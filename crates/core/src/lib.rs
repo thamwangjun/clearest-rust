@@ -1429,7 +1429,8 @@ pub mod config {
             let path = Self::global_settings_path();
             if path.exists() {
                 let content = tokio::fs::read_to_string(&path).await?;
-                Ok(serde_json::from_str(&content).unwrap_or_default())
+                Ok(serde_json::from_str(&content)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse settings.json: {e}"))?)
             } else {
                 Ok(Self::default())
             }
@@ -1451,7 +1452,8 @@ pub mod config {
             let path = Self::global_settings_path();
             if path.exists() {
                 let content = std::fs::read_to_string(&path)?;
-                Ok(serde_json::from_str(&content).unwrap_or_default())
+                Ok(serde_json::from_str(&content)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse settings.json: {e}"))?)
             } else {
                 Ok(Self::default())
             }
