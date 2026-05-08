@@ -3315,6 +3315,15 @@ fn format_provider_name(provider_id: &str) -> String {
 async fn auth_status(json_output: bool) {
     let settings = Settings::load().await.unwrap_or_default();
     let config = &settings.config;
+    // Inject config.env into the process environment so credentials stored in
+    // settings.json are visible to detect_api_key_env_source(). This mirrors the
+    // main loop injection at lines 517-523, which is bypassed by the auth fast-path.
+    // Real process env vars always win — only set if not already present.
+    for (key, value) in &config.env {
+        if std::env::var(key).is_err() {
+            std::env::set_var(key, value);
+        }
+    }
     let active_provider = config.selected_provider_id();
     let provider_cfg = config
         .provider_configs
