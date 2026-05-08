@@ -3588,7 +3588,7 @@ mod tests {
     fn test_detect_bearer_token_when_only_auth_token_set() {
         // RED: before fix, ANTHROPIC_AUTH_TOKEN is invisible to env source detection.
         // After fix: detect_api_key_env_source("anthropic") == Some("ANTHROPIC_AUTH_TOKEN").
-        let _guard = env_test_mutex().lock().unwrap();
+        let _guard = env_test_mutex().lock().unwrap_or_else(|p| p.into_inner());
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::set_var("ANTHROPIC_AUTH_TOKEN", "test_bearer_value");
         let result = detect_api_key_env_source("anthropic");
@@ -3604,7 +3604,7 @@ mod tests {
     fn test_detect_api_key_env_source_prefers_api_key_over_auth_token() {
         // When ANTHROPIC_API_KEY is set, it wins (bearer token is not set simultaneously
         // in valid configs, but even if it were the API key path takes precedence here).
-        let _guard = env_test_mutex().lock().unwrap();
+        let _guard = env_test_mutex().lock().unwrap_or_else(|p| p.into_inner());
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test");
         let result = detect_api_key_env_source("anthropic");
@@ -3619,7 +3619,7 @@ mod tests {
     #[test]
     fn test_detect_api_key_env_source_none_when_neither_set() {
         // Regression guard: no credentials → None.
-        let _guard = env_test_mutex().lock().unwrap();
+        let _guard = env_test_mutex().lock().unwrap_or_else(|p| p.into_inner());
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         let result = detect_api_key_env_source("anthropic");
@@ -3633,7 +3633,7 @@ mod tests {
     #[test]
     fn test_detect_api_key_env_source_non_anthropic_ignores_auth_token() {
         // For non-Anthropic providers, ANTHROPIC_AUTH_TOKEN must not be detected.
-        let _guard = env_test_mutex().lock().unwrap();
+        let _guard = env_test_mutex().lock().unwrap_or_else(|p| p.into_inner());
         std::env::remove_var("OPENAI_API_KEY");
         std::env::set_var("ANTHROPIC_AUTH_TOKEN", "test_bearer_value");
         let result = detect_api_key_env_source("openai");
