@@ -8613,7 +8613,7 @@ mod tests {
     async fn test_status_bearer_token_shows_authenticated_bearer() {
         // RED: currently shows "Not authenticated" because old code uses resolve_api_key only.
         // After fix: must show "Authenticated (Bearer token)".
-        let _guard = env_test_mutex().lock().unwrap();
+        let _guard = env_test_mutex().lock().unwrap_or_else(|p| p.into_inner());
         let mut ctx = make_ctx();
         // Ensure no conflicting env vars
         std::env::remove_var("ANTHROPIC_API_KEY");
@@ -8629,7 +8629,7 @@ mod tests {
     #[tokio::test]
     async fn test_status_api_key_shows_authenticated_api_key() {
         // Regression guard: API key path must still show "Authenticated (API key)".
-        let _guard = env_test_mutex().lock().unwrap();
+        let _guard = env_test_mutex().lock().unwrap_or_else(|p| p.into_inner());
         let mut ctx = make_ctx();
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test");
@@ -8644,7 +8644,7 @@ mod tests {
     #[tokio::test]
     async fn test_status_no_credentials_shows_not_authenticated() {
         // Regression guard: no credentials must show "Not authenticated".
-        let _guard = env_test_mutex().lock().unwrap();
+        let _guard = env_test_mutex().lock().unwrap_or_else(|p| p.into_inner());
         let mut ctx = make_ctx();
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
