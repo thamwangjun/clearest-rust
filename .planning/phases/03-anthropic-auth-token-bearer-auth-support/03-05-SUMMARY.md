@@ -34,7 +34,7 @@ patterns-established:
 requirements-completed: [D-09]
 
 # Metrics
-duration: 15min
+duration: 8min
 completed: 2026-05-09
 ---
 
@@ -44,21 +44,20 @@ completed: 2026-05-09
 
 ## Performance
 
-- **Duration:** ~15 min
+- **Duration:** ~8 min
 - **Started:** 2026-05-09T00:00:00Z
-- **Completed:** 2026-05-09T00:15:00Z
-- **Tasks:** 2 of 2 complete (TDD task + human-verify checkpoint approved)
+- **Completed:** 2026-05-09T00:08:00Z
+- **Tasks:** 1 of 2 complete (Task 2 is a human-verify checkpoint)
 - **Files modified:** 1
 
 ## Accomplishments
 - Unit test `test_config_env_injection_makes_auth_token_visible_to_detect` added and passing (RED gate)
 - Injection loop inserted into `auth_status()` after `let config = &settings.config;` and before `detect_api_key_env_source()` call (GREEN gate)
 - `cargo check -p claurst` exits 0 with no new errors
-- Human-verify checkpoint approved: `claurst auth status` with ANTHROPIC_AUTH_TOKEN in settings.json config.env returns "Logged in. API key: ANTHROPIC_AUTH_TOKEN"; removing config.env reverts to "Not logged in for Anthropic."
 
 ## Task Commits
 
-Each task was committed atomically (on worktree branch `worktree-agent-ad42d4a3e26f5bddf`):
+Each task was committed atomically:
 
 1. **Task 1 RED: add failing test for config.env injection** - `fc06557` (test)
 2. **Task 1 GREEN: inject config.env in auth_status()** - `fe7c7c2` (feat)
@@ -66,11 +65,11 @@ Each task was committed atomically (on worktree branch `worktree-agent-ad42d4a3e
 _Note: TDD — separate RED (test) and GREEN (feat) commits._
 
 ## Files Created/Modified
-- `crates/cli/src/main.rs` — Added config.env injection loop in auth_status() (lines 3318-3327) and unit test `test_config_env_injection_makes_auth_token_visible_to_detect` (lines 3656-3682)
+- `crates/cli/src/main.rs` — Added config.env injection loop in auth_status() (lines 3318-3327) and added unit test test_config_env_injection_makes_auth_token_visible_to_detect (lines 3656-3682)
 
 ## Decisions Made
 - Scoped injection to `auth_status()` only (not `handle_auth_command()`) to keep the fix close to the consumer `detect_api_key_env_source()` and avoid side effects on other auth commands
-- Injection pattern is identical to the main loop (lines 517-523): real process env vars always win (only set if not already present)
+- Injection pattern is identical to the main loop (lines 517-523): real process env vars always win
 
 ## Deviations from Plan
 
@@ -86,9 +85,9 @@ None - no external service configuration required.
 
 ## Next Phase Readiness
 
-- UAT Test 4 now passes: ANTHROPIC_AUTH_TOKEN in settings.json config.env yields "Logged in." from `claurst auth status`
-- Implementation is on worktree branch `worktree-agent-ad42d4a3e26f5bddf`; needs merge to main before plan 03-06 executes
-- Plan 03-06 can proceed: remove `use_bearer_auth` from ProviderConfig and simplify the resolver
+- Implementation complete; pending human-verify checkpoint (Task 2)
+- Human verification: rebuild binary, unset env vars, add ANTHROPIC_AUTH_TOKEN to settings.json config.env, run `claurst auth status` — expect "Logged in." / "API key: ANTHROPIC_AUTH_TOKEN"
+- After verification: UAT Test 4 can be marked passed; plan 03-06 can proceed
 
 ---
 *Phase: 03-anthropic-auth-token-bearer-auth-support*
