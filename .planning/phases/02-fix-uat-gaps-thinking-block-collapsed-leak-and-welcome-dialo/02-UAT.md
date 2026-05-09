@@ -5,7 +5,7 @@ source:
   - .planning/phases/02-fix-uat-gaps-thinking-block-collapsed-leak-and-welcome-dialo/02-01-SUMMARY.md
   - .planning/phases/02-fix-uat-gaps-thinking-block-collapsed-leak-and-welcome-dialo/02-02-SUMMARY.md
 started: 2026-05-09T00:00:00Z
-updated: 2026-05-09T12:00:00Z
+updated: 2026-05-09T00:00:00Z
 ---
 
 ## Current Test
@@ -20,9 +20,8 @@ result: pass
 
 ### 2. Collapsed Thinking Block Shows Animated Dots
 expected: In the TUI, when an AI message has a collapsed thinking block, the collapsed header shows animated dots (`.` / `..` / `...` cycling every few frames) — no fragment of the thinking text appears in the collapsed state.
-result: issue
-reported: "503 Service Unavailable with ANTHROPIC_AUTH_TOKEN via Claude Code proxy — happens even without --thinking, so the request claurst sends is malformed for Bearer auth through a proxy. Works fine in native Claude Code with the same token."
-severity: major
+result: skipped
+reason: Requirements were wrong — thinking block is only collapsible after thinking completes, so there is no scenario where animated dots apply. Feature dropped.
 
 ### 3. Welcome Page on First Run
 expected: Run the app with no credentials configured (fresh profile or cleared credentials). The onboarding dialog opens to the Welcome page first — not "Connect A Provider" / ProviderSetup page.
@@ -36,20 +35,11 @@ result: pass
 
 total: 4
 passed: 3
-issues: 1
+issues: 0
 pending: 0
-skipped: 0
+skipped: 1
 blocked: 0
 
 ## Gaps
 
-- truth: "App connects successfully with ANTHROPIC_AUTH_TOKEN via Bearer auth through a Claude Code proxy"
-  status: failed
-  reason: "User reported: 503 Service Unavailable with correct ANTHROPIC_AUTH_TOKEN via Claude Code proxy — happens even without --thinking. Works fine in native Claude Code with the same token. Request claurst sends appears malformed for this proxy."
-  severity: major
-  test: 2
-  root_cause: "UNKNOWN — assume wrong until user verifies. Unverified hypothesis only: x-anthropic-billing-header may be sent unconditionally even when use_bearer_auth=true, and Claude Code proxies may reject it. This has NOT been confirmed by the user. Do not plan or implement fixes based on this hypothesis."
-  artifacts: []
-  missing:
-    - "Diagnose actual root cause — do NOT assume x-anthropic-billing-header without user verification"
-  debug_session: ""
+[none yet]
