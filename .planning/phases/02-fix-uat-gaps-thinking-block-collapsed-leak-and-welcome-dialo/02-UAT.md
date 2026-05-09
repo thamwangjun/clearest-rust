@@ -48,14 +48,8 @@ blocked: 0
   reason: "User reported: 503 Service Unavailable with correct ANTHROPIC_AUTH_TOKEN via Claude Code proxy — happens even without --thinking. Works fine in native Claude Code with the same token. Request claurst sends appears malformed for this proxy."
   severity: major
   test: 2
-  root_cause: "UNVERIFIED BY USER — hypothesis: x-anthropic-billing-header is sent unconditionally on every request including when use_bearer_auth=true. Claude Code proxies either reject this header or pass it to Anthropic's backend where the CCH hash mismatches if the proxy modifies the body at all. The fix is to skip x-anthropic-billing-header when use_bearer_auth=true."
-  artifacts:
-    - path: "crates/api/src/lib.rs"
-      lines: "740-752"
-      issue: "x-anthropic-billing-header built and sent unconditionally — no bearer-auth guard"
-    - path: "crates/api/src/cch.rs"
-      lines: "10-17"
-      issue: "CCH hash uses hardcoded seed; proxy body rewrite invalidates hash"
+  root_cause: "UNKNOWN — assume wrong until user verifies. Unverified hypothesis only: x-anthropic-billing-header may be sent unconditionally even when use_bearer_auth=true, and Claude Code proxies may reject it. This has NOT been confirmed by the user. Do not plan or implement fixes based on this hypothesis."
+  artifacts: []
   missing:
-    - "Gate x-anthropic-billing-header behind `if !self.config.use_bearer_auth` at crates/api/src/lib.rs:740-752"
+    - "Diagnose actual root cause — do NOT assume x-anthropic-billing-header without user verification"
   debug_session: ""
