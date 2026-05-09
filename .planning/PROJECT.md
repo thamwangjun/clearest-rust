@@ -24,15 +24,15 @@ A reliable, feature-complete Rust alternative to Claude Code that stays current 
 - ✓ Feature-flag-gated crate compilation (36+ Cargo features) — existing
 - ✓ Live model thinking process display — existing
 - ✓ Import of Claude config — existing
+- ✓ Welcome screen Enter keypress advances to TUI session without silent exit — v1.0 (BUG-01)
+- ✓ Collapsed thinking block shows animated dots, not leaked content text — v1.0
+- ✓ First-run no-credentials users land on Welcome page, not ProviderSetup — v1.0
+- ✓ ANTHROPIC_AUTH_TOKEN accepted as bearer auth credential with conflict detection — v1.0
+- ✓ `/status` displays "Authenticated (Bearer token)" for ANTHROPIC_AUTH_TOKEN — v1.0
 
 ### Active
 
-- [ ] Fix welcome screen silent exit: pressing Enter on first-launch welcome page exits claurst silently with no error output
-
-### Validated in Phase 02
-
-- ✓ Collapsed thinking block shows animated dots, not leaked content text (frame_count-driven dot animation)
-- ✓ First-run no-credentials users land on Welcome page, not ProviderSetup (show() routing fix)
+*(None — next milestone requirements TBD via `/gsd-new-milestone`)*
 
 ### Out of Scope
 
@@ -48,12 +48,14 @@ A reliable, feature-complete Rust alternative to Claude Code that stays current 
 
 ## Context
 
+- **Shipped:** v1.0 (2026-05-09) — 3 phases, 9 plans, 4 days, ~354,938 lines of Rust
 - **Upstream:** `git remote upstream → https://github.com/kuberwastaken/claurst.git`. Merging upstream changes is part of ongoing maintenance. The parent repo (`claurst/`) holds the git history and `.planning/`; Rust source lives at the repo root (Cargo.toml at `/`).
 - **Spec reference:** `spec/` directory contains ~990 KB of Claude Code feature specs across 15 files (INDEX.md for navigation). This is the ground truth for parity work.
 - **Existing plan:** `plan.md` has a detailed Managed Agents implementation plan (manager-executor architecture, budget splitting, `/managed-agents` slash command).
 - **Open issues:** 20+ open GitHub issues; highest priority are security (#123), mouse/TUI (#104), Ollama (#86), and voice (#88).
 - **Codebase map:** `.planning/codebase/` has architecture, stack, conventions, concerns, integrations, and testing docs (refreshed 2026-05-04).
 - **Build:** Pure Rust, Cargo workspace, Tokio async runtime. Feature-flag-gated compilation. No external build tools needed beyond `cargo`.
+- **Tech debt (v1.0):** `RenderContext::default()` in test paths always shows one dot; `auth_status()` mirrors resolver conflict check rather than delegating — both low priority.
 
 ## Constraints
 
@@ -65,8 +67,11 @@ A reliable, feature-complete Rust alternative to Claude Code that stays current 
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Minimal v1 roadmap (single bug fix phase) | Feature parity is largely achieved; future work arrives as new milestones | — Pending |
-| `spec/` as parity ground truth | Spec was reverse-engineered from the official TypeScript Claude Code; 990 KB coverage across all subsystems | — Pending |
+| Minimal v1 roadmap (single bug fix phase) | Feature parity is largely achieved; future work arrives as new milestones | ✓ Good — scope stayed tight; 3 phases delivered cleanly |
+| `spec/` as parity ground truth | Spec was reverse-engineered from the official TypeScript Claude Code; 990 KB coverage across all subsystems | ✓ Good — used for bearer auth D-0x requirement derivation |
+| TDD with `serial_test` for bearer auth | Async env-var tests have race conditions without serialization | ✓ Good — 6 stable integration tests, no flakiness |
+| Remove `use_bearer_auth` field vs expose it (D-04 scope change) | User-approved in UAT Round 2: simpler API, resolver decides automatically | ✓ Good — cleaner UX, no user-facing toggle needed |
+| `auth_status()` mirrors resolver conflict check (not delegates) | Minimal fix scope; full delegation would require refactoring fast-path callers | ⚠️ Revisit — documented as tech debt if conflict conditions grow |
 
 ## Evolution
 
@@ -86,4 +91,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-04 after requirements scoping*
+*Last updated: 2026-05-09 after v1.0 milestone*

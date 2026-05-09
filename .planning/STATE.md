@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-status: milestone_complete
-last_updated: "2026-05-08T16:05:21.175Z"
-last_activity: 2026-05-08
+milestone_name: Initial Bug-Fix + Bearer Auth
+status: shipped
+last_updated: "2026-05-09T00:00:00.000Z"
+last_activity: 2026-05-09
 progress:
   total_phases: 3
   completed_phases: 3
@@ -17,9 +17,10 @@ progress:
 
 ## Project Reference
 
+See: .planning/PROJECT.md (updated 2026-05-09)
+
 **Core Value:** A reliable, feature-complete Rust alternative to Claude Code that stays current with upstream changes and fixes bugs fast enough that contributors trust it for daily use.
-**Milestone:** v1
-**Current Focus:** Phase 03 — anthropic-auth-token-bearer-auth-support
+**Current Focus:** Planning next milestone — run `/gsd-new-milestone`
 
 ## Current Position
 
