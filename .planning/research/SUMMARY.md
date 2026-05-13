@@ -1,323 +1,255 @@
 # Project Research Summary
 
-**Project:** claurst — Rust rewrite of Claude Code CLI
-**Domain:** Agentic developer tool (compiled TUI binary, multi-provider LLM, MCP client)
-**Researched:** 2026-05-04
+**Project:** claurst — v1.1 Codebase Refactor
+**Domain:** Behavior-preserving refactoring of an AI-generated 12-crate Rust workspace
+**Researched:** 2026-05-13
 **Confidence:** HIGH
 
 ## Executive Summary
 
-claurst is a mature 12-crate Rust workspace that has already shipped the hard infrastructure: a streaming agentic query loop, ratatui TUI, MCP client, plugin system, ACP/bridge protocol, and SQLite session storage. The core architecture is sound and needs no structural reinvention. The milestone work is correctness and parity: close 6 open bugs (including one critical security vulnerability), refactor two monolithic files that block safe parallel development, then layer feature parity and Managed Agents on a stable foundation.
+This milestone is a structured, behavior-preserving refactoring of the claurst workspace — an AI-generated Rust CLI totaling ~355K lines across 12 crates. The codebase has significant but well-catalogued code smells typical of AI-generated Rust: three god files exceeding 4,000–8,000 lines individually (`commands/lib.rs`, `tui/app.rs`, `core/lib.rs`), ~410 `.unwrap()` calls in production paths, 32 `#[allow(dead_code)]` suppressions, and widespread primitive obsession (domain concepts stored as raw `String`). The refactoring approach is characterization-first, bottom-up by dependency layer: establish a safety net of snapshot and behavioral tests before touching production code, then work leaf crates upward.
 
-The recommended build order is: security hardening first (issue #123 is an active arbitrary-execution vector — every day it ships unfixed is unacceptable), bug fixes next, structural refactors that reduce upstream merge-conflict risk, feature parity work (slash commands, tools, TUI quality), and finally Managed Agents. This order is non-negotiable: the security issue gates trust, the monolith split gates conflict-free parallel development, and the bug fixes gate daily usability. The stack is essentially frozen — only two new crates (serde_yml for agent YAML, landlock for optional Linux MCP sandboxing) should ever be added, and only when those specific subsystems are built.
+The recommended approach adds four new dev tools (`insta` for snapshot tests, `cargo-nextest` for fast parallel test runs, `cargo-llvm-cov` for coverage baselines, `cargo-machete` for dead dependency sweeps), tightens `clippy.toml` thresholds, and works through the crates in topological order: `claurst-core` first (both the foundation layer and the worst grab-bag), then Layer 1 protocol crates, then tools, then query/bridge orchestration, and finally the three highest-risk files (`tui/app.rs`, `commands/lib.rs`, `cli/main.rs`). Each phase follows the same four-step loop: clippy sweep to identify smells, coverage baseline, write characterization tests, extract and refactor, verify snapshots unchanged.
 
-The principal risks are: (1) the 8,576-line commands/src/lib.rs monolith creating upstream merge conflicts that accelerate divergence; (2) the MCP security gap enabling supply-chain attacks until fixed; (3) async translation bugs silently making concurrent TypeScript features sequential in Rust; and (4) ~410 production unwrap() calls and std::sync::Mutex poisoning creating cascading TUI crashes. All four risks have concrete, confirmed mitigations documented in the research.
+The central risk is the interplay between Rust's borrow checker and method extraction on ownership-tangled structs (particularly `App` and `run_query_loop`). Extractions that worked inline because the compiler could see field-level split borrows will break at function-call boundaries. The mitigation is to map all field accesses before extracting, prefer cloning at boundaries during refactoring, and optimize later. The characterization test suite is non-negotiable as the first deliverable — no code moves without it.
+
+---
 
 ## Key Findings
 
-### Recommended Stack
+### Recommended Stack — New Dev Tooling
 
-The existing dependency set is well-chosen and should not change. The codebase already uses tokio 1.44, ratatui 0.29, crossterm 0.28, reqwest 0.13, rmcp 1.4.0, rusqlite 0.31 (bundled), parking_lot, and dashmap. The SSE streaming layer, TUI input handling, and MCP transport are all hand-rolled to the correct level of abstraction — adding third-party crates for any of these would create conflicting abstractions, not improvements.
+The workspace already has a sound production dependency set (tokio, ratatui, reqwest, rmcp, rusqlite). The v1.1 refactoring milestone adds exclusively dev tooling; no production dependencies change.
 
-**Add only conditionally:**
-- `serde_yml` 0.0.12: Agent YAML frontmatter — only when implementing the full agents subsystem from spec/05. The existing hand-rolled parser in `skill_discovery.rs` is sufficient until then.
-- `landlock` 0.4.4: Linux MCP child process filesystem restriction — Linux-only, optional, only if deeper OS-level sandboxing beyond the allowlist fix is desired.
+**Essential additions (Cargo.toml `[dev-dependencies]` + CLI installs):**
+- `insta` 1.47 — snapshot/characterization tests; `.snap` files committed to git; CI uses `cargo insta test --check` to fail on behavioral drift
+- `cargo-nextest` 0.9.116 — 3x faster than `cargo test`; process-per-test isolation catches global-state leaks that `cargo test`'s thread model masks
+- `cargo-llvm-cov` (latest via brew tap) — macOS-compatible LLVM coverage; per-crate baselines before refactoring; CI gate via `--fail-under-lines`
+- `proptest` 1.9.0 + `proptest-derive` 0.8.0 — property tests for pure function extractions where invariant-based assertions survive implementation changes
 
-**Do not add:** eventsource-stream, reqwest-eventsource, tui-textarea, tui-input, seccompiler, async-openai, whisper-rs, sherpa-onnx, serde_yaml (deprecated), tower-lsp, keyring.
+**Nice-to-have:**
+- `cargo-machete` 0.9.2 — dead dependency scan (text-search, runs in ~1s)
+- `cargo-mutants` 27.0.0 — mutation testing to validate test quality; defer until test suite stabilizes
 
-**Defer ratatui 0.30 upgrade** until a phase that touches the TUI heavily — upgrade in one step across all 12 crates, validate fully.
+**Clippy configuration changes:**
 
-### Expected Features
+New `clippy.toml` at workspace root:
+```toml
+cognitive-complexity-threshold = 15   # default 25
+too-many-arguments-threshold = 6      # default 7
+too-many-lines-threshold = 80         # default 100
+type-complexity-threshold = 200       # default 250
+```
 
-**Must fix first — security/correctness (gates everything else):**
-- Issue #123: MCP arbitrary execution via project-level config — add `McpServerScope` + `McpTrustStore` in claurst-core, trust gate in claurst-cli before server spawn
-- Issues #79/#96: Path containment bypass for pre-creation paths — canonicalize parent dir, append filename
-- `auth.json` world-readable credentials — one-line `set_permissions(0o600)` fix in `auth_store.rs`
-- OAuth CSRF: missing state validation in `oauth_flow.rs` — verify or add `state == original_state` check before token exchange
-- SSRF via `WebFetchTool` — pre-resolve hostname, reject RFC 1918/loopback/link-local IPs
-- Web response OOM: stream with chunk loop and byte-counter cap before truncation
+Add to `[workspace.lints.clippy]`:
+```toml
+pedantic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+wildcard_imports = "warn"
+```
 
-**Must fix next — high-severity bugs (breaks daily use for large user segments):**
-- Issue #86: Ollama remote URL not respected — `api_base` not wired from `Config::resolve_api_base()` to `ClientConfig` at provider construction
-- Issue #106: Custom OpenAI base URL not surfaced in TUI — `OPENAI_BASE_URL` already wired in env; gap is a missing input field in `settings_screen.rs`
-- Issue #117: Minimax `Authorization: Bearer` header — add `auth_header_style: AuthHeaderStyle` to `ClientConfig`
-- Issue #104: `EnableMouseCapture` unconditionally set — make opt-in via `mouse_capture: bool` in settings; fallback keyboard scroll
-- Issue #76: API key paste drops characters — use crossterm `Paste` (bracketed paste) event
-- Issue #47: Non-QWERTY keyboard layouts break shortcuts — configurable key bindings via `settings.json`
-- Issue #88: Voice/ALSA not connecting — fix device enumeration error path and toggle state management
+Expect 50–200 new warnings on first run. Triage per-crate with targeted `#[allow]` plus justification comments; never suppress wholesale at crate root.
 
-**Table-stakes TUI gaps (interactive correctness is broken without these):**
-- `AskUserQuestion` tool never renders a dialog — sessions hang silently
-- `AutoPermissionHandler` used in all modes — interactive permission prompts never fire; security regression vs TypeScript
-- Input cursor/multi-line input — no left/right navigation, no selection, no Shift+Enter newline
+**Skip:** `cargo-tarpaulin` (Linux-only), `cargo-udeps` (requires nightly), `quickcheck` (proptest supersedes it), `criterion` (benchmarking, out of scope).
 
-**Table-stakes slash commands (most frequently invoked by Claude Code users):**
-`/add-dir`, `/context`, `/copy`, `/usage`, `/keybindings`, `/vim`, `/voice`, `/color`, `/theme`, `/upgrade`, `/terminal-setup`
+Full rationale and install commands: `.planning/research/STACK.md`
 
-**High-value slash commands:**
-`/commit-push-pr`, `/ultraplan`, `/ultrareview`, `/pr-comments`, `/branch`+`/fork`, `/output-style`, `/effort` (needs thinking-budget wiring)
+---
 
-**Missing tools by priority:**
-- High: `McpAuthTool` (OAuth for authenticated MCP servers), `TeamCreateTool` + `TeamDeleteTool` (Managed Agents prerequisite), `LSPTool`
-- Medium: `SyntheticOutputTool`, `REPLTool`
+### Expected Features — Code Smells to Fix
 
-**TUI quality improvements (biggest perceived jump for zero functional change):**
-- Syntax highlighting in code blocks (syntect or bat)
-- Markdown rendering (bold, italic, headers, lists in ratatui)
-- Inline diff view for Edit tool results
-- Tool output collapsing with Show more affordance
+Research catalogued smells across all 12 crates from live `cargo clippy` output and direct code inspection.
 
-**Defer to later:**
-- LSPTool, REPLTool — useful but complex; not daily-use blockers
-- 60+ low-traffic stub commands — implement as not-yet-supported stubs, not silent failures
-- Managed Agents full implementation — depends on TeamCreate/Delete and clean core boundary
-- Hardcoded model registry to hosted JSON manifest with 24h cache
+**Table stakes (codebase is unmaintainable without these):**
 
-**Explicit anti-features (never implement):**
-- Local ASR (Sherpa-ONNX, whisper-rs) — out of scope per PROJECT.md
-- GUI (Electron/Tauri) — reject PRs
-- Auto-updating without user consent
-- Telemetry — document absence as a differentiator
-- Node.js shim / TypeScript interop
+| Smell | Worst Instance | Why Blocking |
+|---|---|---|
+| Large Class / Divergent Change | `commands/lib.rs` 8,657 lines; `tui/app.rs` 5,990 lines; `core/lib.rs` 4,291 lines | Adding any command, UI state, or type requires touching the same file as unrelated changes |
+| Long Method | `run_query_loop` cognitive complexity 156/25; multiple 300-line `execute` methods in commands | Impossible to reason about control flow; multi-concern functions resist safe extraction |
+| Long Parameter List | `run_interactive` takes 11 params; 4 functions in `core/import_config.rs` take 8-9 each | Wrong-order argument bugs compile silently |
+| Dead Code suppression | 32 `#[allow(dead_code)]` across workspace | Hides whether code is intentional scaffolding or garbage |
+| Duplicate Code | `error_marker` triplicated in `tui/message_copy.rs`; `if args.is_empty()` guard in all 30 command `execute` fns | Bug fixes must be applied in N places |
+| Primitive Obsession | `session_id: String`, `model: String`, provider names dispatched via string match | Argument-swap bugs are invisible to the compiler |
+
+**Differentiators (do after tests are solid):**
+
+| Smell | Fix | Value |
+|---|---|---|
+| Primitive Obsession (type codes) | `ToolStatus` enum; `ModelId`/`SessionId` newtypes | Compiler-enforced transitions; compile-time typo detection |
+| Data Class | `ToolUseBlock::mark_complete()`, `Message::has_tool_use()` | Behavior lives where the data lives |
+| Feature Envy | `EffortLevel::to_api_str()` in core; command logic to `CommandContext` methods | Eliminates 6 copies of the same match in `query` |
+| Shotgun Surgery | Single `Provider` registration point; eliminate provider string literals from 6 crates | New providers add one `impl`, not N match arms |
+| Message Chains | `config.api_key_for("anthropic")` vs 4-step chain | Decouples `App` from internal `Config`/`Settings` layout |
+| Speculative Generality | `Arc<dyn Fn>` callbacks replaced with concrete handler structs where one call site exists | Removes indirection; easier to trace |
+
+**Anti-features (do not build):**
+- God `Utils` module — creates a new Divergent Change target
+- Blanket `#[allow(clippy::too_many_arguments)]` — hides the symptom
+- Breaking up small crates (`acp`, `buddy`) into smaller units — adds build overhead without benefit
+- Replacing `Box<dyn SlashCommand>` with enum — legitimate polymorphism, leave it
+
+Full catalog with detection commands: `.planning/research/FEATURES.md`
+
+---
 
 ### Architecture Approach
 
-The 12-crate dependency graph is a strict DAG with claurst-core at the foundation and claurst-cli at the apex. Every placement decision must respect it: new slash commands go in claurst-commands (not claurst-tui); new tools go in claurst-tools; shared types that multiple crates need go in claurst-core. The current monoliths — commands/src/lib.rs (8,576 lines), tui/src/app.rs (5,918 lines), core/src/lib.rs (4,246 lines) — are the primary merge-conflict surface with upstream and must be split into per-command and per-module files before new features are added.
+The codebase has a clear six-layer dependency graph. Safe refactoring order follows topological sort from leaf to root. Every extraction follows: `cargo clippy` to find smells → `cargo llvm-cov` for baseline → write characterization tests → extract → run `cargo insta test --check` → verify coverage unchanged.
 
-**Major components and their change boundaries:**
+**Dependency layers (bottom to top):**
 
-1. `claurst-core` — data model foundation; gains `McpServerScope`, `McpTrustStore`, `ManagedAgentConfig`, sub-module split (`config.rs`, `permissions.rs`, `session.rs`). All new `Config`/`Settings` fields must use `#[serde(default)]`.
-2. `claurst-commands` — slash command registry; split into `commands/src/commands/<name>.rs` per command, then add new commands without conflicts. `all_commands()` remains the single registration point.
-3. `claurst-tools` — tool implementations; one file per tool, registered in `ToolRegistry`. `ToolContext` is the only injection point — add `managed_agent_config: Option<ManagedAgentConfig>` for Managed Agents.
-4. `claurst-tui` — UI rendering only; dispatches to `claurst-commands` via `CommandResult` variants; never defines commands. Overlay triggers use `CommandResult` => `tui/src/app.rs` match.
-5. `claurst-cli` — binary entry point; trust gate for project-scoped MCP servers before `McpToolWrapper` construction.
-6. `claurst-query` — new `managed_orchestrator.rs` file for Managed Agents; `run_query_loop` gains a startup branch if managed config is active.
+```
+Layer 0: claurst-core, claurst-buddy (no workspace deps — foundation)
+Layer 1: claurst-api, claurst-mcp, claurst-plugins, claurst-acp (depend on core only)
+Layer 2: claurst-tools (core + api + mcp)
+Layer 3: claurst-query (core + api + tools + plugins)
+Layer 4: claurst-bridge (core + api + query)
+Layer 5: claurst-tui, claurst-commands (commands depends on tui — tui must be stable first)
+Layer 6: claurst-cli (binary; depends on all)
+```
 
-**Key abstractions to never break:** `Tool` trait signature, `SlashCommand` trait, `QueryEvent` enum, `LlmProvider` trait (no new required methods), `ContentBlock` enum, `Config`/`Settings` serde shapes.
+**Key extraction targets:**
+- `core/lib.rs` (4,291 lines): `error.rs` → `message_types.rs` → `config.rs` → `auth.rs` in sequence; `lib.rs` becomes pure `pub use`
+- `tui/app.rs` (5,990 lines): decompose supporting modules first, then extract `event_handler.rs`, `state.rs`, `render_dispatch.rs`; decompose App's 150 fields into `SessionState`, `UiState`, `RuntimeState`, `InfraHandles`
+- `commands/lib.rs` (8,657 lines): one file per slash command under `commands/src/slash/`; wait until tui is stable
+- `cli/main.rs` (3,732 lines): extract `McpToolWrapper`, OAuth flow, MCP init to library crates
+
+**Borrow checker extraction rules (critical for `app.rs` and `run_query_loop`):**
+1. Extract pure functions first
+2. Clone at boundaries during refactoring, optimize later
+3. Decompose structs into nested sub-structs to unlock split borrows
+4. Never hold `std::sync::Mutex` or `parking_lot::Mutex` guards across `.await` points
+
+Full dependency graph, extraction sequences, test patterns: `.planning/research/ARCHITECTURE.md`
+
+---
 
 ### Critical Pitfalls
 
-1. **MCP project-config enables arbitrary command execution (#123)** — Never auto-trust project-level MCP servers. Add `McpServerScope::Project` to `McpServerConfig`, gate connection behind `McpTrustStore::is_trusted()`, show approval dialog. Never bypass for `--yes` / non-interactive mode. Highest-priority fix.
+1. **Method extraction breaks split borrows** — Extracting a block into a new method loses the compiler's field-level borrow analysis. Prevention: map all field accesses before extracting; prefer direct `pub(crate)` field access over getter methods during extraction; extract pure functions first.
 
-2. **Monolith merge conflicts will kill upstream sync cadence** — `commands/src/lib.rs` at 8,576 lines causes multi-hundred-conflict merges on every upstream sync. Split into per-command files (pure refactor, no behavior change) before taking the next upstream.
+2. **Removing `.clone()` cascades lifetimes across multiple crates** — `.clone()` is a lifetime eraser. Removing one in `core` can force lifetime annotations through `query`, `tui`, and `commands`. Prevention: remove one clone at a time; if removal requires adding lifetime params to more than 2 function signatures in different modules, restructure ownership instead.
 
-3. **TypeScript async concurrency silently becomes sequential Rust** — `Promise.all([a(), b()])` maps to `tokio::join!(a(), b())`, not sequential `.await` chains. During every tool/command translation, audit each `async` function for concurrency intent.
+3. **`std::sync::Mutex` guard held across `.await` deadlocks Tokio** — The workspace uses `parking_lot::Mutex` in several paths; same rule applies. Prevention: audit every mutex for `.await` in the same scope; never expose a guard outside a synchronous newtype wrapper method.
 
-4. **`unwrap()` + `std::sync::Mutex` cascade panics** — ~410 production `unwrap()` calls; a panic poisons `std::sync::Mutex` locks, and downstream `unwrap()` on the poisoned lock takes down the TUI render loop. Migrate to `parking_lot::Mutex` (already a workspace dep, never poisons).
+4. **Characterization tests at the wrong granularity** — Too coarse misses internal regressions; too fine (private functions) breaks on every rename. Prevention: test at public crate interfaces; use `insta` snapshots for CLI output and `ratatui::backend::TestBackend` for TUI state.
 
-5. **Path canonicalization fails for pre-creation paths** — `path_is_within_workspace` uses `canonicalize` which errors for files that do not exist yet; the `unwrap_or_else(|_| path.to_path_buf())` fallback skips the containment check. Fix: canonicalize parent dir, append filename.
+5. **Big-bang multi-crate PR stalls CI** — Type renames ripple through 11 consumers; 2,000-line diffs are unreviable and unrollbackable. Prevention: `pub use` re-exports + `#[deprecated]` for incremental renames; hard limit of 3 crates and 500 lines diff per structural PR.
 
-6. **Credentials file is world-readable** — `auth.json` inherits process umask; API keys visible to all co-tenant processes. One-line fix: `set_permissions(0o600)` after write.
+Additional: orphan rule prevents cross-crate Feature Envy fixes (use extension traits); unwrap replacement can paper over `Option<T>` type design issues (categorize each before replacing, never batch); crate API breakage invisible within workspace (run `cargo-semver-checks` as phase exit gate).
 
-7. **`select!` cancels in-flight work non-deterministically** — `tokio::select!` drops non-winning futures at their `.await` point, silently dropping streaming tokens or key events. Prefer separate Tokio tasks communicating via channels; audit every `select!` in `tui/src/app.rs` for cancel safety before touching the event loop.
+Full 15-pitfall catalog with phase mappings: `.planning/research/PITFALLS.md`
+
+---
 
 ## Implications for Roadmap
 
-### Phase 1: Security Hardening
+### Phase 1: Characterization Test Infrastructure
+**Rationale:** No code moves before behavior is anchored. This is the gating constraint across all four research files.
+**Delivers:** `insta` + `cargo-nextest` + `cargo-llvm-cov` wired in workspace; `clippy.toml` tightened; per-crate coverage baselines; `App::new_for_test()` constructor; `crates/test-utils` with shared fakes (`FakeLlmProvider`, `FakeSessionStore`); CLI smoke tests via `assert_cmd`; TUI render snapshots via `TestBackend` + insta for each `AppState` variant
+**Avoids:** Pitfall 6 (wrong-granularity tests), Pitfall 10 (deleting abstractions before tests reveal they are load-bearing for test doubles)
+**Research flag:** Standard patterns — no deeper research needed
 
-**Rationale:** Issue #123 is an active attack surface — any project a user opens can silently execute OS commands. Credentials are world-readable. Path containment is bypassable for new files. None of these are acceptable for a daily-use tool. Security cannot wait for feature work.
+### Phase 2: claurst-core Decomposition (Layer 0)
+**Rationale:** Most depended-on crate AND a leaf. Fixing it propagates benefits to all 11 dependents. Worst Divergent Change target.
+**Delivers:** `core/lib.rs` split into `error.rs` → `message_types.rs` → `config.rs` → `auth.rs`; `lib.rs` becomes pure re-exports; `session_id`/`model` primitive obsession replaced with newtypes; parameter objects for 8+ param functions; 32 dead-code suppressions audited
+**Avoids:** Pitfall 8 (use `pub use` re-exports during split), Pitfall 12 (one sub-module per PR), Pitfall 7 (`cargo-semver-checks` before any `pub` symbol removal)
+**Research flag:** Standard patterns
 
-**Delivers:** A claurst that users can safely point at untrusted repositories without risking code execution or credential theft.
+### Phase 3: Layer 1 Protocol Crates (claurst-api, claurst-mcp, claurst-plugins, claurst-acp)
+**Rationale:** Depend only on core (now stable). `claurst-api` is already well-structured. `claurst-mcp` has Mutex fragility. `claurst-acp` (285 lines, no tests) is a Lazy Class candidate for inlining into `cli`/`query`.
+**Delivers:** `claurst-mcp` Mutex poison chains hardened; `claurst-acp` evaluated for inlining or given test coverage; `cargo-machete` dead dependency sweep
+**Avoids:** Pitfall 3 (Mutex-across-await audit), Pitfall 4 (keep `dyn LlmProvider` — runtime-selected trait)
+**Research flag:** Standard patterns
 
-**Addresses:**
-- Issue #123: `McpServerScope` + `McpTrustStore` in core, trust gate in cli, approval dialog in tui
-- `auth.json` permissions: `set_permissions(0o600)` in `auth_store.rs`
-- Path containment bypass: canonicalize parent + filename in `path_is_within_workspace`
-- SSRF in `WebFetchTool`: pre-resolve hostname, reject RFC 1918 ranges via `ipnet`
-- Web fetch OOM: stream with byte-counter cap before truncation
-- OAuth CSRF: verify state parameter in `oauth_flow.rs`
+### Phase 4: claurst-tools Cleanup (Layer 2)
+**Rationale:** ~370 `.unwrap()` in production paths — highest concentration in workspace.
+**Delivers:** `.unwrap()` calls categorized and addressed per Pitfall 5 rules; Feature Envy fixes via extension traits (not method moves, due to orphan rule); tiny formatter/synthetic_output files evaluated for folding
+**Avoids:** Pitfall 5 (unwrap categorization before replacing), Pitfall 9 (orphan rule)
+**Research flag:** Standard patterns
 
-**Avoids:** Pitfalls 1, 2, 3, 13, 14
+### Phase 5: claurst-query and claurst-bridge (Layers 3-4)
+**Rationale:** `run_query_loop` is 2,400 lines at cognitive complexity 156/25 — most complex function in workspace. `claurst-bridge` has zero tests and is a single file.
+**Delivers:** `run_query_loop` decomposed into named step functions; duplicate tool-dispatch patterns extracted; bridge test coverage established; `AGENT_RUNNER OnceCell` panic characterized with `#[should_panic]` (do NOT fix the global pattern here — separate milestone)
+**Avoids:** Pitfall 1 (split-borrow analysis before extraction), Pitfall 3 (async mutex audit for bridge shared state), Architecture Anti-Pattern 1 (do not fix `AGENT_RUNNER` global)
+**Research flag:** NEEDS RESEARCH — the async ownership patterns in `run_query_loop` are complex; recommend `/gsd-research-phase` before execution planning for this phase
 
-**No new crates needed.** The fix is enforcement logic in existing infrastructure.
+### Phase 6: claurst-tui Decomposition (Layer 5a)
+**Rationale:** Must be stable before claurst-commands (which depends on tui). Decompose supporting modules before tackling `app.rs`.
+**Delivers:** `prompt_input.rs` (3,719 lines) split into `input_history.rs`, `completion.rs`, `input_render.rs`; `overlays.rs` (2,103 lines) split into `overlays/` tree; `dialogs.rs` (1,621 lines) split; `app.rs` split into `event_handler.rs`, `state.rs`, `render_dispatch.rs`; `App` 150-field struct decomposed into `SessionState`/`UiState`/`RuntimeState`/`InfraHandles`
+**Avoids:** Pitfall 1 (struct decomposition is prerequisite to method extraction — split borrows only work across distinct struct fields)
+**Research flag:** Standard patterns — ratatui TestBackend + insta documented
 
----
+### Phase 7: claurst-commands Decomposition (Layer 5b)
+**Rationale:** Worst god file saved last because it depends on tui (stable after Phase 6).
+**Delivers:** Each slash command to `commands/src/slash/<name>.rs`; `framework/` module for `CommandContext`/`CommandResult`; `lib.rs` reduced to dispatch registry (~200 lines); `require_args` helper eliminating 30 duplicate guards; `text_from_content_blocks` moved to `core::types`
+**Avoids:** Pitfall 8 (one command file per PR using `pub use` bridges)
+**Research flag:** Standard patterns
 
-### Phase 2: Structural Refactors
-
-**Rationale:** `commands/src/lib.rs` (8,576 lines) and `core/src/lib.rs` (4,246 lines) are the primary upstream merge-conflict surface. Splitting them before adding new commands or before the next upstream sync reduces future merge effort from hours to minutes. This is a pure refactor — no behavior change, test suite must pass identically before and after.
-
-**Delivers:** A codebase where adding a new slash command is one new file in `commands/src/commands/`, with zero merge-conflict risk against upstream. Enables parallel development of Phases 3 and 4.
-
-**Addresses:**
-- Split `crates/commands/src/lib.rs` into per-command modules under `commands/src/commands/`
-- Split `crates/core/src/lib.rs` into `config.rs`, `permissions.rs`, `session.rs`, `auth_store.rs`
-- Establish `upstream-merge` branch pattern: never merge upstream directly to `main`
-- Add per-feature CI matrix during this phase
-
-**Avoids:** Pitfalls 9, 10
-
-**Research flag:** Standard Rust module refactor — no research phase needed.
-
----
-
-### Phase 3: Bug Fixes
-
-**Rationale:** Six open bugs break daily use for major user segments: remote API users (#86, #106, #117), all interactive users (#104, #76), non-QWERTY users (#47), and voice users (#88). Issues #86, #106, #117 share the same root cause (`api_base` not propagated) and should be fixed together. `AskUserQuestion` and permission dialog wiring are correctness failures that make the interactive permission model broken by design.
-
-**Delivers:** A claurst where API key configuration works, remote providers connect, the input field is usable, and the permission model actually prompts users.
-
-**Addresses:**
-- #86 + #106: Wire `api_base` from `Config::resolve_api_base()` to `ClientConfig` at provider construction
-- #117: Add `auth_header_style: AuthHeaderStyle` to `ClientConfig`; select by provider
-- #104: Make `EnableMouseCapture` opt-in via `mouse_capture: bool` in settings; fallback keyboard scroll
-- #76: Use crossterm `Paste` event (bracketed paste) for input fields
-- #47: Configurable key bindings map in `settings.json`; semantic `KeyCode::Char` matching
-- #88: Fix ALSA device enumeration error path; graceful voice toggle
-- `AskUserQuestion` TUI wiring: render dialog when `ask_user` event received
-- Permission dialog wiring: replace `AutoPermissionHandler` with interactive handler in default mode
-
-**Avoids:** Pitfalls 5, 7, 8
-
-**Research flag:** All root causes confirmed in codebase — no research phase needed.
-
----
-
-### Phase 4: TUI Quality and Input Polish
-
-**Rationale:** The biggest perceived quality jump for zero functional change is rendering improvement — syntax-highlighted code, markdown formatting, and inline diffs make code-heavy responses dramatically more readable. Input quality (cursor navigation, multi-line, selection) is a prerequisite for the slash command expansion phase.
-
-**Delivers:** A TUI that matches user expectations for a professional terminal tool: readable code blocks, navigable input, copyable output.
-
-**Addresses:**
-- Syntax highlighting in code blocks (evaluate `syntect` at phase start)
-- Markdown rendering in ratatui
-- Inline diff view for `Edit` tool results
-- Tool output collapsing with Show more affordance
-- Input cursor left/right navigation, selection, multi-line Shift+Enter
-- Session list dialog for `/resume` command
-- Token usage indicator in status bar
-- ratatui 0.29 -> 0.30 upgrade (evaluate at phase start; upgrade in one step, validate all 12 crates)
-
-**Avoids:** Pitfall 8 (select! cancellation — TUI event loop changes require cancel-safety audit)
-
-**Research flag:** `syntect` + ratatui integration path needs brief evaluation before committing.
-
----
-
-### Phase 5: Feature Parity — Slash Commands and Tools
-
-**Rationale:** After the monolith split (Phase 2), adding slash commands is one file per command with no merge risk. This phase delivers the most frequently-invoked missing commands and the tool gaps that block real workflows.
-
-**Delivers:** The most-used missing slash commands and the tool gaps blocking real workflows. claurst becomes viable as a daily driver for Claude Code users who relied on these commands.
-
-**Addresses:**
-- High-traffic missing commands: `/add-dir`, `/context`, `/copy`, `/usage`, `/keybindings`, `/vim`, `/voice`, `/color`, `/theme`, `/upgrade`, `/terminal-setup`
-- High-value chaining commands: `/commit-push-pr`, `/ultraplan`, `/ultrareview`, `/pr-comments`, `/branch`+`/fork`
-- `/effort` thinking-budget wiring to API
-- `McpAuthTool` (OAuth for authenticated MCP servers)
-- `TeamCreateTool` + `TeamDeleteTool` (Managed Agents prerequisite)
-- Placeholder stubs for 60+ low-traffic/internal commands (print not yet supported)
-- `SyntheticOutputTool`, `REPLTool` (medium priority, can defer)
-
-**Avoids:** Pitfall 7 (TypeScript to Rust async concurrency — audit each ported command for Promise.all equivalents)
-
-**Research flag:** `McpAuthTool` OAuth flow needs a brief research phase — MCP OAuth implementation patterns are sparse.
-
----
-
-### Phase 6: Managed Agents
-
-**Rationale:** Managed Agents is the primary claurst-specific differentiator vs the TypeScript upstream. It requires `TeamCreateTool` and `TeamDeleteTool` (Phase 5), the core sub-module split (Phase 2), and clean `ToolContext` boundaries. The plan.md architecture is correct and requires no new crates.
-
-**Delivers:** `/managed-agents` slash command, manager-executor architecture, budget splitting policy, agent role display in TUI, per-session cost breakdown.
-
-**Addresses (plan.md phases):**
-- Phase 1 (Config): `ManagedAgentConfig`, `BudgetSplitPolicy`, `ManagedAgentPreset` in core
-- Phase 2 (Command): `ManagedAgentsCommand` in commands
-- Phase 3 (Orchestrator): `managed_orchestrator.rs` in query; `AgentTool` reads `ToolContext.managed_agent_config`
-- Phase 4 (TUI): Extend `agents_view.rs` with `AgentRole` enum and cost breakdown
-- Phase 5 (Sessions): `agent_role` and `managed_session_id` fields (Option<T>, skip_serializing_if — no migration)
-- Phase 6 (Tests): Integration tests for manager-executor delegation
-
-**Avoids:** Pitfall 10 (add `managed_agents` feature to `dev_full` from the start)
-
-**Research flag:** `CommandContext` -> `AuthStore` access pattern for `/managed-agents` setup needs a design decision before this phase begins.
-
----
-
-### Phase 7: Upstream Sync Cadence and CI Hardening
-
-**Rationale:** After Phases 1-6, the codebase has a clean module structure, security baseline, and full feature set. Establishing a regular monthly upstream sync cadence prevents the accumulated debt that made this milestone necessary.
-
-**Delivers:** Sustainable maintenance: monthly upstream syncs that take hours not days, CI that catches feature-flag regressions, no `std::env::set_var` UB in the test suite.
-
-**Addresses:**
-- `upstream-merge` branch pattern (never merge upstream directly to `main`)
-- Per-feature CI jobs for each non-default Cargo feature
-- Replace `std::env::set_var` in async tests with `#[serial]` or `Config` injection
-- `cargo deny` check for duplicate crossterm major versions
-- Migrate `std::sync::Mutex` to `parking_lot::Mutex` (mechanical sweep)
-- Replace `panic!` in production match arms with `Err(...)` returns
-
-**Avoids:** Pitfalls 6, 9, 10, 11, 15
-
-**Research flag:** No research phase needed — all patterns are established.
-
----
+### Phase 8: claurst-cli Extraction (Layer 6)
+**Rationale:** Binary crate last. Extract logic belonging in library crates; reduce `main.rs` to thin wiring.
+**Delivers:** `McpToolWrapper` to `crates/tools`; OAuth dispatch to `cli/src/startup/auth.rs`; MCP init to `startup/mcp_init.rs`; CLI integration tests via `assert_cmd` + `insta_cmd`
+**Research flag:** Standard patterns
 
 ### Phase Ordering Rationale
 
-- **Security first (Phase 1):** #123 is an active attack vector; credentials are world-readable. No feature work ships until these are closed.
-- **Refactor before features (Phase 2):** The monolith split gates conflict-free parallel feature development. Done after security so the codebase is stable for the refactor.
-- **Bug fixes in Phase 3:** Daily-use frustrations but not security crises. Some bug fixes (mouse capture, permission dialog wiring) overlap with TUI work.
-- **TUI quality before slash command expansion (Phase 4 before Phase 5):** Input navigation and syntax highlighting are prerequisites for usable display of command output.
-- **Managed Agents last (Phase 6):** Has the most prerequisites (TeamCreate/Delete tools, core split, clean ToolContext). Building it last minimizes cascading conflict risk.
+- Phases 2-8 follow strict topological order — refactoring a dependent before its dependencies are stable causes rework cascades.
+- `claurst-commands` (worst god file) is Phase 7, not Phase 1, because it depends on `claurst-tui`. This is the critical ordering constraint confirmed in Cargo.toml.
+- The characterization test phase is load-bearing — Pitfalls 6 and 10 both describe how skipping it causes silent regressions.
+- Phase 5 (`run_query_loop`) is the highest semantic risk and the most likely to benefit from a dedicated research pass.
 
 ### Research Flags
 
-Phases needing `/gsd-research-phase` during planning:
-- **Phase 6 (Managed Agents):** `CommandContext` -> `AuthStore` access pattern is underspecified; cross-provider budget validation needs a design decision.
-- **Phase 4 (TUI Quality):** `syntect` + ratatui integration path needs brief evaluation before committing.
-- **Phase 5 (McpAuthTool):** MCP OAuth spec implementation patterns are sparse; targeted research before implementation.
+Needs research before execution planning:
+- **Phase 5 (claurst-query):** `run_query_loop` at 2,400 lines / complexity 156 with complex async ownership — recommend `/gsd-research-phase` on "extracting async methods from complex Tokio state machine"
 
-Phases with well-established patterns (skip research):
-- **Phase 1 (Security):** All root causes confirmed; fix approaches fully specified in ARCHITECTURE.md and PITFALLS.md.
-- **Phase 2 (Refactors):** Standard Rust module split; no domain knowledge needed.
-- **Phase 3 (Bug Fixes):** All root causes confirmed in codebase; no external API uncertainty.
-- **Phase 7 (CI Hardening):** Standard CI patterns.
+Standard patterns (skip research-phase):
+- **Phases 1, 2, 3, 4, 6, 7, 8:** All use well-documented Rust module decomposition, insta snapshot, and ratatui TestBackend patterns confirmed in official docs
+
+---
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All findings from direct codebase inspection; existing stack is well-chosen; only 2 optional additions recommended |
-| Features | HIGH | Derived from spec/13_rust_codebase.md (authoritative inventory), spec/02 and spec/03 (parity targets), and confirmed open issues |
-| Architecture | HIGH | All findings from direct inspection of crate boundaries, dependency graph, and monolith sizes |
-| Pitfalls | HIGH | Security pitfalls corroborated by CVE-2025-53109/53110; async pitfalls from authoritative Tokio docs; remaining from CONCERNS.md audit |
+| Stack (dev tooling) | HIGH | All versions verified via Context7, official docs, GitHub releases; macOS compatibility confirmed for llvm-cov |
+| Features (smell catalog) | HIGH | All confirmed instances from live `cargo clippy` output and direct code inspection — not inferred |
+| Architecture (phase order) | HIGH | Dependency graph from actual Cargo.toml files; ordering constraints factual, not estimated |
+| Pitfalls | HIGH (Rust-specific) / MEDIUM (AI-code patterns) | Borrow checker, async mutex, monomorphization pitfalls have authoritative sources; AI-code-specific patterns from community sources |
 
-**Overall confidence: HIGH**
+**Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **`CommandContext` / `AuthStore` coupling for Managed Agents:** During `/managed-agents setup`, the command needs to validate auth credentials for both manager and executor providers simultaneously. `CommandContext` currently carries `config: Config` but not a live `AuthStore` handle. Resolution: thread `AuthStore` through `CommandContext`, or read from the config `api_key` field (already merged in). Needs a design decision before Phase 6.
+- **`CLAURST_MOCK_PROVIDER` mode does not exist:** The highest-ROI integration test class (headless `-p` mode with a mock provider) requires adding a mock provider feature flag. Plan in Phase 1, not discovered in Phase 8.
+- **36 Cargo feature flags not fully audited:** A full audit of which flags are ever toggled off in CI or production is a prerequisite for per-feature `cargo check` gates but was not completed in this research pass.
+- **`run_query_loop` extraction plan missing:** Research confirmed the complexity (156/25, 2,400 lines) but did not produce a field-access map or extraction sequence. Phase 5 needs its own research pass before execution planning.
 
-- **`serde_yml` maturity:** serde_yml is at 0.0.x. If agent YAML frontmatter needs complex nested structures beyond what the hand-rolled parser handles, evaluate serde_yml at that point but be prepared for API instability. Validate in a prototype before committing.
-
-- **ratatui 0.30 upgrade timing:** 0.30 adds `scrolling-regions` for flicker-free `insert_before` in the message pane. Deferred to Phase 4 — validate across all 12 crates before merging.
-
-- **#86 / #106 live API validation:** STACK.md notes that `OPENAI_BASE_URL` is already wired in `api_base_env_var_for_provider()` and Minimax `use_bearer_auth: true` appears already implemented. Validate against live APIs before closing issues — root causes may differ in the current upstream state.
+---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `/Users/thamw/development/local/clearest-rust/crates/` — direct codebase inspection
-- `spec/13_rust_codebase.md` — authoritative Rust implementation inventory
-- `spec/02_commands.md` + `spec/03_tools.md` — TypeScript parity targets
-- `.planning/codebase/CONCERNS.md` — security and reliability audit (2026-05-04)
-- EscapeRoute CVE-2025-53109/53110 (cymulate.com) — MCP sandbox escape confirmation
-- Tokio select! cancellation safety docs (tokio.rs) — async pitfall validation
-- Ratatui mouse capture docs (ratatui.rs) — mouse pitfall validation
+- Codebase direct inspection (`crates/*/src/*.rs`, `Cargo.toml` files) — live analysis 2026-05-13
+- Context7 `/mitsuhiko/insta` — insta 1.47 docs
+- Context7 `/proptest-rs/proptest` — proptest 1.9.0 / proptest-derive 0.8.0
+- Context7 `/taiki-e/cargo-llvm-cov` — coverage, macOS install
+- [Clippy Lint Configuration](https://doc.rust-lang.org/clippy/lint_configuration.html)
+- [cargo-nextest](https://nexte.st/) — 0.9.116
+- [cargo-mutants GitHub](https://github.com/sourcefrog/cargo-mutants/releases) — v27.0.0
+- [cargo-machete GitHub](https://github.com/bnjbvr/cargo-machete) — 0.9.2
+- [ratatui TestBackend + insta](https://ratatui.rs/recipes/testing/snapshots/)
+- [How to Deadlock a Tokio Application — Turso](https://turso.tech/blog/how-to-deadlock-tokio-application-in-rust-with-just-a-single-mutex)
+- [cargo-semver-checks](https://crates.io/crates/cargo-semver-checks)
 
 ### Secondary (MEDIUM confidence)
-- `landlock` on crates.io (v0.4.4) — Linux sandboxing option
-- `serde_yml` on crates.io (v0.0.12) — agent YAML option; young crate
-- ratatui v0.29/0.30 highlights (ratatui.rs) — upgrade path assessment
-- MCP STDIO 200,000 servers exposure (venturebeat.com) — threat context
-
-### Tertiary (LOW confidence)
-- Migrating TypeScript to Rust (corrode.dev) — async pitfall framing
+- [How to Avoid Fighting the Rust Borrow Checker — qouteall](https://qouteall.fun/qouteall-blog/2025/How%20to%20Avoid%20Fighting%20Rust%20Borrow%20Checker)
+- [Clone to Satisfy the Borrow Checker — Rust Design Patterns](https://rust-unofficial.github.io/patterns/anti_patterns/borrow_clone.html)
+- [Item 12: Generics vs Trait Objects — Effective Rust](https://www.lurklurk.org/effective-rust/generics.html)
+- [Long-term Rust Project Maintenance — corrode.dev](https://corrode.dev/blog/long-term-rust-maintenance/)
+- [idiomatic-rust](https://github.com/mre/idiomatic-rust) — newtype pattern
 
 ---
-*Research completed: 2026-05-04*
+*Research completed: 2026-05-13*
 *Ready for roadmap: yes*
