@@ -87,6 +87,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   2. `run_query_loop` is decomposed into named step functions; no single extracted function exceeds cognitive complexity 25 in `query/src/lib.rs`
   3. `claurst-bridge` has characterization tests; the `AGENT_RUNNER` double-init panic is documented with `#[should_panic]`
   4. `cargo test --workspace` passes and `cargo insta test --check` shows no snapshot drift
+**Reference**: `.planning/phases/08-query-and-bridge-orchestration/REFACTORING-REFERENCE.md` — Message Chains, Hide Delegate, Remove Middle Man, Extract Function (with `run_query_loop` sequencing guide)
 **Plans**: TBD
 
 ### Phase 9: tui Crate Decomposition
@@ -98,6 +99,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
   2. Developer can find render functions that take focused sub-state arguments rather than whole-App params — `render.rs` functions no longer receive whole-`App` where only a sub-state is needed
   3. `prompt_input.rs`, `overlays.rs`, and `dialogs.rs` are each split into named sub-modules under their respective directories
   4. `cargo insta test --check` passes with all existing TUI snapshots stable — no visual regression
+**Reference**: `.planning/phases/09-tui-crate-decomposition/REFACTORING-REFERENCE.md` — Large Struct, Extract Module/Struct, Move Method, Move Field, Feature Envy (with App decomposition sequencing guide)
 **Plans**: TBD
 **UI hint**: yes
 

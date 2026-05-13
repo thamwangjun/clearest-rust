@@ -63,6 +63,8 @@ Progress: [░░░░░░░░░░] 0%
 - `.planning/codebase/` — architecture, stack, conventions, concerns, integrations, testing docs
 - `.planning/research/ARCHITECTURE.md` — borrow checker extraction rules, crate decomposition sequences
 - `.planning/research/SUMMARY.md` — full phase rationale and research flags
+- `.planning/phases/08-query-and-bridge-orchestration/REFACTORING-REFERENCE.md` — Message Chains, Hide Delegate, Extract Function techniques (Rust-adapted)
+- `.planning/phases/09-tui-crate-decomposition/REFACTORING-REFERENCE.md` — Large Struct, Extract Module/Struct, Move Method, Feature Envy techniques (Rust-adapted)
 
 ### Blockers
 
