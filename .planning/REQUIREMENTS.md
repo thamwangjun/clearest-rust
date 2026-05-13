@@ -63,20 +63,20 @@ Systematic elimination of code smells across all 12 crates of the claurst Rust w
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TEST-01 | — | Pending |
-| TEST-02 | — | Pending |
-| TEST-03 | — | Pending |
-| TEST-04 | — | Pending |
-| BLOT-01 | — | Pending |
-| BLOT-02 | — | Pending |
-| BLOT-03 | — | Pending |
-| BLOT-04 | — | Pending |
-| BLOT-05 | — | Pending |
-| BLOT-06 | — | Pending |
-| DISP-01 | — | Pending |
-| DISP-02 | — | Pending |
-| DISP-03 | — | Pending |
-| COUP-01 | — | Pending |
-| COUP-02 | — | Pending |
-| COUP-03 | — | Pending |
-| COUP-04 | — | Pending |
+| TEST-01 | Phase 4 | Pending |
+| TEST-02 | Phase 4 | Pending |
+| TEST-03 | Phase 4 | Pending |
+| TEST-04 | Phase 4 | Pending |
+| BLOT-03 | Phase 5 | Pending |
+| BLOT-05 | Phase 5 | Pending |
+| COUP-01 | Phase 6 | Pending |
+| BLOT-06 | Phase 7 | Pending |
+| DISP-03 | Phase 7 | Pending |
+| COUP-04 | Phase 8 | Pending |
+| BLOT-02 | Phase 9 | Pending |
+| COUP-03 | Phase 9 | Pending |
+| BLOT-01 | Phase 10 | Pending |
+| DISP-02 | Phase 10 | Pending |
+| COUP-02 | Phase 11 | Pending |
+| BLOT-04 | Phase 12 | Pending |
+| DISP-01 | Phase 13 | Pending |
