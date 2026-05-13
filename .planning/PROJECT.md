@@ -32,7 +32,11 @@ A reliable, feature-complete Rust alternative to Claude Code that stays current 
 
 ### Active
 
-*(None — next milestone requirements TBD via `/gsd-new-milestone`)*
+- Characterization test suite covering unit, integration, and CLI snapshot paths before any refactoring begins
+- Bloater elimination: extract long functions, split oversized files, decompose long parameter lists, replace primitive obsession
+- Dispensable cleanup: remove dead code, de-duplicate logic, delete speculative over-abstractions
+- Coupler fixes: Feature Envy, Inappropriate Intimacy, Message Chains across all 12 crates
+- Change Preventer fixes: single responsibility per module, resolve Shotgun Surgery scatter
 
 ### Out of Scope
 
@@ -90,5 +94,16 @@ This document evolves at phase transitions and milestone boundaries.
 3. Audit Out of Scope — reasons still valid?
 4. Update Context with current state
 
+## Current Milestone: v1.1 Codebase Refactor
+
+**Goal:** Transform the AI-written codebase into maintainable, idiomatic Rust by eliminating all major code smells across all 12 crates — anchored by a characterization test suite written before any code is moved.
+
+**Target features:**
+- Characterization test suite (unit + integration + CLI snapshot) — behavior anchor before refactoring
+- Bloater elimination: long methods, large classes, primitive obsession, long parameter lists
+- Dispensable cleanup: dead code, duplicate code, speculative generality
+- Coupler fixes: Feature Envy, Inappropriate Intimacy, Message Chains
+- Change Preventer fixes: Divergent Change, Shotgun Surgery
+
 ---
-*Last updated: 2026-05-09 after v1.0 milestone*
+*Last updated: 2026-05-13 — v1.1 milestone started*
