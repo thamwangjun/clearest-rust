@@ -1,8 +1,481 @@
 # Technology Stack Research: claurst Milestone
 
 **Project:** claurst — Rust rewrite of Claude Code
-**Researched:** 2026-05-04
+**Researched:** 2026-05-04 (original); refactoring toolchain section added 2026-05-13
 **Scope:** Crates and patterns to adopt/avoid for missing features; existing codebase analyzed
+
+---
+
+## [NEW] v1.1 Refactoring Toolchain
+
+This section covers tools needed for the systematic code smell refactoring milestone.
+The milestone requires three capability types: (1) detecting smells via static analysis,
+(2) anchoring behavior with characterization tests before any code moves, and
+(3) validating that tests actually cover what they claim to cover.
+
+### Overview: Essential vs Nice-to-Have
+
+| Category | Tool | Version | Essential? |
+|----------|------|---------|-----------|
+| Lint configuration | `clippy.toml` thresholds (built-in) | — | **Essential** |
+| Snapshot/characterization tests | `insta` | 1.47 | **Essential** |
+| Test runner (workspace-aware) | `cargo-nextest` | 0.9.116 | **Essential** |
+| Coverage (baseline + regression gate) | `cargo-llvm-cov` | latest via brew/cargo | **Essential** |
+| Property-based tests | `proptest` + `proptest-derive` | 1.9.0 / 0.8.0 | Nice-to-have |
+| Dead dependency detection | `cargo-machete` | 0.9.2 | Nice-to-have |
+| Mutation testing | `cargo-mutants` | 27.0.0 | Nice-to-have |
+| Unused dep detection (accurate) | `cargo-udeps` | latest (nightly required) | Skip for now |
+
+---
+
+### Tool 1: `clippy.toml` — Code Smell Detection (Essential)
+
+Clippy is already in the workspace. The refactoring work needs it **configured** to
+surface the Fowler smells, not just run at defaults. Defaults are too permissive for this
+purpose (e.g., `cognitive-complexity-threshold = 25` passes most problematic functions).
+
+**What to configure in `clippy.toml` at the workspace root:**
+
+```toml
+# Bloater detection
+cognitive-complexity-threshold = 15   # default 25; catches real multi-concern functions
+too-many-arguments-threshold = 6      # default 7; nudges toward builder/config-struct patterns
+too-many-lines-threshold = 80         # default 100; flags long methods for extraction
+
+# Primitive obsession / type complexity
+type-complexity-threshold = 200       # default 250; surface overly-complex type expressions
+
+# Structural smells (via Cargo.toml [lints.clippy] section)
+# These must be enabled because they are allow-by-default:
+#   pedantic = "warn"
+#   clippy::struct_excessive_bools — too many bool fields (data clumps smell)
+#   clippy::fn_params_excessive_bools — bool params instead of enums
+#   clippy::wildcard_imports — hides dependencies, makes Inappropriate Intimacy hard to spot
+#   clippy::must_use_candidate — surfaces ignored return values
+```
+
+**Clippy lint groups and their mapping to Fowler smells:**
+
+| Clippy Group | Enabled by Default | Fowler Smells Detected |
+|---|---|---|
+| `clippy::complexity` | warn | Long Method (cognitive complexity, nesting) |
+| `clippy::pedantic` | allow (must enable) | Primitive Obsession, Feature Envy, Message Chains |
+| `clippy::suspicious` | warn | wrong-looking code that typically signals Divergent Change |
+| `clippy::nursery` | allow (experimental) | optional; catches some Dispensable patterns |
+| `clippy::restriction` | allow (cherry-pick only) | unwrap-heavy code, dead code patterns |
+
+**How to enable in `Cargo.toml` workspace lints section:**
+
+```toml
+[workspace.lints.clippy]
+pedantic = "warn"          # enables the full pedantic group
+# Individual restriction cherry-picks:
+unwrap_used = "warn"       # surfaces where panics hide missing error paths
+expect_used = "warn"       # same; prefer anyhow/thiserror patterns
+wildcard_imports = "warn"  # smells like Feature Envy or Inappropriate Intimacy
+```
+
+**Note on false positives:** After enabling pedantic, expect 50–200 new warnings on first
+run across 12 crates. The workflow is: run clippy, triage per-crate, add targeted
+`#[allow(clippy::...)]` with justification comments for intentional patterns. Do NOT
+suppress wholesale with `#![allow(clippy::pedantic)]` at crate root — that defeats the
+purpose.
+
+**Confidence: HIGH** — Clippy configuration is documented at
+https://doc.rust-lang.org/clippy/lint_configuration.html; all thresholds and group names
+verified against the live Clippy docs.
+
+---
+
+### Tool 2: `insta` — Snapshot/Characterization Tests (Essential)
+
+**Version:** `1.47` (verified via Context7 / mitsuhiko/insta)
+
+**Why essential for refactoring:** Characterization tests must capture *current* behavior
+before any code moves. `insta` stores output in `.snap` files committed to git. After a
+refactor, `cargo insta test --check` (used in CI) fails if behavior changed, even subtly.
+This is the exact semantics needed for safe refactoring.
+
+**Cargo.toml addition:**
+
+```toml
+[dev-dependencies]
+insta = { version = "1.47", features = ["yaml", "json", "redactions", "filters"] }
+
+# Speed optimization (insta's diff engine is slow in debug mode)
+[profile.dev.package.insta]
+opt-level = 3
+[profile.dev.package.similar]
+opt-level = 3
+```
+
+**Install the companion CLI:**
+
+```bash
+cargo install cargo-insta --locked
+```
+
+**Workflow for characterization tests:**
+
+```bash
+# 1. Write tests using assert_snapshot! with no existing .snap files
+# 2. Run once to generate snapshots from current (possibly smelly) behavior:
+cargo insta test --accept
+
+# 3. Commit the .snap files — these are the behavior anchors
+
+# 4. During refactoring, CI runs:
+cargo insta test --check     # fails if any snapshot changed
+```
+
+**What to snapshot for this codebase:**
+
+- CLI command output (stdout/stderr for each command path in `crates/cli`)
+- Serialized structs that cross crate boundaries (serde Debug/Display output)
+- TUI render outputs for key screens (ratatui Buffer snapshots)
+- Error messages from `anyhow`/`thiserror` chains
+
+**Integration with cargo test:** `insta` tests are regular `#[test]` functions using
+`assert_snapshot!` / `assert_yaml_snapshot!` / `assert_json_snapshot!`. They run
+with `cargo test` or `cargo nextest run` without any special flags.
+
+**Confidence: HIGH** — verified via Context7 docs (/mitsuhiko/insta).
+
+---
+
+### Tool 3: `cargo-nextest` — Test Runner (Essential)
+
+**Version:** `0.9.116` (released ~3 days before this research, 2026-05-10)
+
+**Why essential for refactoring:** This workspace has 12 crates and 1,227 existing tests.
+During refactoring, tests will run frequently (after each extraction). `cargo-nextest`
+runs each test in its own process (no shared state), reports per-crate results cleanly,
+and runs ~3x faster than `cargo test` on large workspaces.
+
+The process-per-test model also catches a class of bugs that are invisible to the
+shared-process `cargo test` runner: global state leaks between tests, which are common
+in AI-generated code.
+
+**Install:**
+
+```bash
+cargo install cargo-nextest --locked
+```
+
+**Usage:**
+
+```bash
+cargo nextest run --workspace          # run all tests across all 12 crates
+cargo nextest run -p claurst-core      # single crate during focused refactoring
+cargo nextest run --test-threads 8     # control parallelism
+```
+
+**Integration with insta:**
+
+```toml
+# .config/nextest.toml
+[profile.default]
+# insta requires INSTA_UPDATE env var to accept; nextest passes it through
+```
+
+**Note:** `serial_test` (already used in the codebase for bearer auth tests) works with
+nextest — the `#[serial]` attribute is honored.
+
+**Confidence: HIGH** — version from crates.io search result; usage patterns from
+official nextest docs (https://nexte.st/).
+
+---
+
+### Tool 4: `cargo-llvm-cov` — Coverage (Essential)
+
+**Why essential for refactoring:** Before refactoring begins, establish a coverage
+baseline. After refactoring, coverage must not decrease. This is the mechanical
+enforcement of "characterization tests cover the code we're moving."
+
+**LLVM source-based coverage is the correct choice over cargo-tarpaulin:**
+- tarpaulin is Linux-only (ptrace-based); this repo is developed on macOS (darwin,
+  per env context). cargo-llvm-cov works on macOS, Linux, and Windows.
+- LLVM coverage tracks at region granularity (not just line), catching cases where
+  one branch of a complex expression is never exercised.
+
+**Install (macOS, as per env):**
+
+```bash
+brew install taiki-e/tap/cargo-llvm-cov
+# OR
+cargo +stable install cargo-llvm-cov --locked  # requires rustc 1.87+
+```
+
+**Usage:**
+
+```bash
+# Generate HTML report for human review
+cargo llvm-cov --workspace --html
+
+# Generate LCOV for CI coverage gate
+cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+# Run only for a specific crate during focused refactoring
+cargo llvm-cov -p claurst-core --html
+```
+
+**Recommended workflow:**
+
+1. Before refactoring: `cargo llvm-cov --workspace --json > coverage-baseline.json`
+2. Write characterization tests until coverage reaches acceptable level per crate
+3. During refactoring: `cargo llvm-cov --workspace --fail-under-lines 70` in CI
+
+**Confidence: HIGH** — verified via Context7 docs (/taiki-e/cargo-llvm-cov); platform
+restriction for tarpaulin verified via community comparison.
+
+---
+
+### Tool 5: `proptest` + `proptest-derive` — Property-Based Tests (Nice-to-Have)
+
+**Versions:** `proptest = "1.9.0"`, `proptest-derive = "0.8.0"`
+
+**Why useful for refactoring:** Property tests are superior to example-based
+characterization tests for catching edge cases when *refactoring pure functions*.
+When extracting a function from a bloated method, write a property test asserting
+the invariants (not the specific output). This survives implementation changes while
+still catching regressions.
+
+**When to use:**
+- Extracting pure functions from bloated methods (parsers, transformers, validators)
+- Testing `LlmProvider` request/response serialization contracts
+- Verifying that refactored `PermissionManager` logic preserves authorization invariants
+
+**When NOT to use:**
+- Testing I/O-heavy async code (use insta snapshots instead)
+- Testing TUI rendering (use insta buffer snapshots instead)
+- As a replacement for characterization tests (write those first with insta)
+
+**Cargo.toml addition:**
+
+```toml
+[dev-dependencies]
+proptest = "1.9.0"
+proptest-derive = "0.8.0"   # enables #[derive(Arbitrary)] on structs/enums
+```
+
+**Basic usage pattern:**
+
+```rust
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn parse_roundtrip(s in "\\PC*") {
+        // extracted function must roundtrip
+        let parsed = parse_something(&s);
+        prop_assert_eq!(format_something(parsed), s);
+    }
+}
+```
+
+**Async note:** Use `test-strategy` crate (not included here) if async proptest tests
+are needed — it supports `#[proptest(async = "tokio")]`. For this milestone the pure
+function extractions will be sync; skip `test-strategy` for now.
+
+**Confidence: HIGH for proptest** — version verified via Context7 (/proptest-rs/proptest)
+and search results showing 1.9.0 as current. **MEDIUM for proptest-derive** — 0.8.0 is
+current per Context7; versioning is independent of main proptest crate and still
+experimental per project's own documentation.
+
+---
+
+### Tool 6: `cargo-machete` — Unused Dependency Detection (Nice-to-Have)
+
+**Version:** `0.9.2` (released 2026-04-15)
+
+**Why useful for refactoring:** The Dispensable smell category includes speculative
+dependencies added "just in case" during AI-written code generation. `cargo-machete`
+finds crates listed in `Cargo.toml` that are never referenced in source.
+
+**Install:**
+
+```bash
+cargo install cargo-machete --locked
+```
+
+**Usage:**
+
+```bash
+cargo machete             # scan workspace for unused deps
+cargo machete --with-metadata  # use cargo metadata for more accurate detection
+```
+
+**Trade-off to understand:** cargo-machete uses text search, not compiler analysis.
+Dependencies used only through proc-macros (e.g., `serde_derive` invoked via
+`#[derive(Serialize)]`) show as false positives. Suppress known false positives in
+`Cargo.toml`:
+
+```toml
+[package.metadata.cargo-machete]
+ignored = ["serde_derive", "tokio-macros"]
+```
+
+**Alternative: `cargo-udeps`** is more accurate (uses compiler output) but requires
+nightly and is significantly slower. Skip it for this milestone; cargo-machete's
+speed (runs in ~1 second on large workspaces) makes it practical as a refactoring
+sweep tool.
+
+**Confidence: HIGH** — version from search results; behavior documented at GitHub
+(https://github.com/bnjbvr/cargo-machete).
+
+---
+
+### Tool 7: `cargo-mutants` — Mutation Testing (Nice-to-Have, Defer to Later Phase)
+
+**Version:** `27.0.0` (released 2026-03-07)
+
+**Why useful:** Mutation testing answers "do the characterization tests actually catch
+bugs, or do they just run?" It injects small bugs (swap operators, return defaults)
+and verifies tests catch them. A "surviving mutant" means a test exists but doesn't
+actually constrain behavior.
+
+**Why to defer:** Mutation testing is slow — it recompiles and reruns the test suite
+once per mutant, and a 12-crate workspace with 1,227 tests will generate thousands of
+mutants. It is most valuable *after* the characterization test suite is written and
+stable, as a quality gate on the tests themselves.
+
+**Recommended workflow (later phase):**
+
+```bash
+cargo install cargo-mutants --locked
+
+# Run on a single crate to limit scope
+cargo mutants -p claurst-core --timeout 60
+
+# Or limit to recently-changed files during active refactoring
+cargo mutants --diff HEAD~1
+```
+
+**Zero configuration required** — cargo-mutants needs no source tree changes.
+
+**Confidence: HIGH** — version verified via GitHub releases page (v27.0.0, 2026-03-07);
+tool listed on Thoughtworks Technology Radar as "Adopt."
+
+---
+
+### Tools to Skip
+
+| Tool | Why Skip |
+|------|---------|
+| `cargo-tarpaulin` | Linux-only (ptrace). Development env is macOS. Use cargo-llvm-cov instead. |
+| `cargo-udeps` | Requires nightly toolchain. cargo-machete is sufficient for the dispensable smell sweep; nightly adds operational friction to a 12-crate workspace. |
+| `quickcheck` | Proptest supersedes it. Proptest has better shrinking, richer strategy combinators, and derive macro support. The existing test suite doesn't use quickcheck; no reason to introduce it. |
+| `arbitrary` (standalone) | The `arbitrary` crate is the fuzzer-integration trait; `proptest-derive` covers the same derive-based test input generation without requiring a fuzzer harness. Use proptest instead. |
+| `criterion` | Benchmarking, not refactoring. Out of scope for this milestone. |
+
+---
+
+### Integration: How These Tools Work Together
+
+The recommended sequence for each crate being refactored:
+
+```
+1. cargo clippy --workspace 2>&1 | grep "crate-name"
+   → Identify smells in the crate (long functions, complex types, bool params)
+
+2. cargo llvm-cov -p crate-name --html
+   → Establish coverage baseline; identify uncovered code paths
+
+3. Write insta snapshot tests for uncovered paths until coverage is acceptable
+   cargo insta test --accept  (first run to generate .snap files)
+
+4. cargo machete              → Remove unused deps found during step 1
+
+5. Perform extractions/splits guided by clippy findings
+
+6. cargo insta test --check   → Verify no behavioral change
+   cargo llvm-cov -p crate-name --fail-under-lines <baseline>
+
+7. (Later) cargo mutants -p crate-name
+   → Verify characterization tests actually constrain behavior
+```
+
+---
+
+### Cargo.toml Changes Summary
+
+**Add to workspace `[dev-dependencies]`:**
+
+```toml
+[dev-dependencies]
+insta = { version = "1.47", features = ["yaml", "json", "redactions", "filters"] }
+proptest = "1.9.0"
+proptest-derive = "0.8.0"
+```
+
+**Add profile optimizations to workspace `Cargo.toml`:**
+
+```toml
+[profile.dev.package.insta]
+opt-level = 3
+[profile.dev.package.similar]
+opt-level = 3
+```
+
+**Add to workspace `Cargo.toml` lints section:**
+
+```toml
+[workspace.lints.clippy]
+pedantic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+wildcard_imports = "warn"
+```
+
+**Add `clippy.toml` at workspace root (new file):**
+
+```toml
+cognitive-complexity-threshold = 15
+too-many-arguments-threshold = 6
+too-many-lines-threshold = 80
+type-complexity-threshold = 200
+```
+
+**Install as cargo extensions (not Cargo.toml — these are CLI tools):**
+
+```bash
+cargo install cargo-nextest --locked
+cargo install cargo-insta --locked
+brew install taiki-e/tap/cargo-llvm-cov  # macOS
+cargo install cargo-machete --locked
+cargo install cargo-mutants --locked     # defer to later phase
+```
+
+---
+
+### Confidence Assessment
+
+| Tool | Confidence | Basis |
+|------|------------|-------|
+| clippy.toml thresholds | HIGH | Official docs verified; all config keys confirmed |
+| insta 1.47 | HIGH | Context7 docs; version current |
+| cargo-nextest 0.9.116 | HIGH | crates.io search confirmed; 3 days old |
+| cargo-llvm-cov | HIGH | Context7 docs; macOS confirmed via brew tap |
+| proptest 1.9.0 | HIGH | Context7 docs + search results; version current |
+| proptest-derive 0.8.0 | MEDIUM | Context7 docs; project notes it's still "experimental" versioning |
+| cargo-machete 0.9.2 | HIGH | GitHub releases + crates.io search |
+| cargo-mutants 27.0.0 | HIGH | GitHub releases page confirmed; Thoughtworks Radar "Adopt" |
+
+---
+
+### Sources (Refactoring Toolchain)
+
+- [Clippy Lint Configuration — official docs](https://doc.rust-lang.org/clippy/lint_configuration.html)
+- [Clippy Lints Index](https://rust-lang.github.io/rust-clippy/master/index.html)
+- Context7 `/mitsuhiko/insta` — insta 1.47 docs
+- Context7 `/proptest-rs/proptest` — proptest 1.9.0 / proptest-derive 0.8.0 docs
+- Context7 `/taiki-e/cargo-llvm-cov` — cargo-llvm-cov installation and usage
+- [cargo-nextest home](https://nexte.st/) — 0.9.116 current
+- [cargo-mutants GitHub releases](https://github.com/sourcefrog/cargo-mutants/releases) — v27.0.0
+- [cargo-machete GitHub](https://github.com/bnjbvr/cargo-machete) — 0.9.2
+- [cargo-tarpaulin vs cargo-llvm-cov comparison](https://rustprojectprimer.com/measure/coverage.html) — macOS support confirmed
+- [Snapshot Testing Rust with cargo-insta](https://www.mutorium.com/blog/cargo-insta-snapshot-testing/)
+- [cargo-mutants Thoughtworks Radar](https://www.thoughtworks.com/radar/tools/cargo-mutants)
 
 ---
 
@@ -271,6 +744,9 @@ simple `name:` / `description:` parsing, the existing hand-roller in
 
 | Crate | Version | Crate for | Confidence | Condition |
 |-------|---------|-----------|------------|-----------|
+| `insta` | 1.47 | Characterization/snapshot tests | HIGH | v1.1 refactoring milestone — add now |
+| `proptest` | 1.9.0 | Property-based tests for pure function extractions | HIGH | v1.1 refactoring milestone — add now |
+| `proptest-derive` | 0.8.0 | Derive Arbitrary for proptest inputs | MEDIUM | With proptest |
 | `landlock` | 0.4.4 | MCP child process filesystem restriction | MEDIUM | Linux only, only if deeper MCP sandbox desired beyond allowlist fix |
 | `serde_yml` | 0.0.12 | Agent YAML frontmatter (spec/05 agents subsystem) | MEDIUM | Only when implementing full agents CRUD from spec |
 
@@ -278,6 +754,11 @@ simple `name:` / `description:` parsing, the existing hand-roller in
 
 | Crate | Reason |
 |-------|--------|
+| `cargo-tarpaulin` | Linux-only; development env is macOS; use cargo-llvm-cov instead |
+| `cargo-udeps` | Requires nightly; cargo-machete is sufficient for dispensable smell sweep |
+| `quickcheck` | Proptest supersedes it with better shrinking and derive support |
+| `arbitrary` (standalone) | Fuzzer-integration trait; proptest-derive covers the same use case |
+| `criterion` | Benchmarking; out of scope for refactoring milestone |
 | `eventsource-stream` / `reqwest-eventsource` | Hand-rolled SSE parser in lib.rs is sufficient; adding this creates conflicting abstraction layers |
 | `tui-textarea` | Conflicts with existing hand-rolled prompt_input.rs; more work to integrate than to fix |
 | `tui-input` | Same reason as tui-textarea |
@@ -349,6 +830,7 @@ message pane, but it requires opt-in via a crate feature flag.
 
 | Area | Confidence | Reasoning |
 |------|------------|-----------|
+| Refactoring toolchain (new) | HIGH | All tools verified via Context7, official docs, or GitHub releases |
 | SSE streaming patterns | HIGH | Directly read the implementation; hand-rolled parser is proven |
 | MCP permission fix approach | HIGH | Permission infrastructure fully exists; issue is application logic |
 | Ollama/minimax/custom-URL bugs | HIGH | Root causes confirmed in source; no crate changes needed |
@@ -361,6 +843,19 @@ message pane, but it requires opt-in via a crate feature flag.
 
 ## Sources
 
+**Refactoring toolchain (new):**
+- [Clippy Lint Configuration](https://doc.rust-lang.org/clippy/lint_configuration.html)
+- [Clippy Lints Index](https://rust-lang.github.io/rust-clippy/master/index.html)
+- Context7 `/mitsuhiko/insta` — insta docs and version
+- Context7 `/proptest-rs/proptest` — proptest 1.9.0 docs
+- Context7 `/taiki-e/cargo-llvm-cov` — coverage tool docs
+- [cargo-nextest home](https://nexte.st/) — 0.9.116
+- [cargo-mutants GitHub releases](https://github.com/sourcefrog/cargo-mutants/releases) — v27.0.0
+- [cargo-mutants Thoughtworks Radar](https://www.thoughtworks.com/radar/tools/cargo-mutants)
+- [cargo-machete GitHub](https://github.com/bnjbvr/cargo-machete) — 0.9.2
+- [Coverage comparison: tarpaulin vs llvm-cov](https://rustprojectprimer.com/measure/coverage.html)
+
+**Original (feature work):**
 - Codebase: `/Users/thamw/development/local/clearest-rust/crates/` (directly read)
 - [eventsource-stream on crates.io](https://crates.io/crates/eventsource-stream) — v0.2.3
 - [reqwest-eventsource on crates.io](https://crates.io/crates/reqwest-eventsource) — v0.6.0
@@ -370,10 +865,7 @@ message pane, but it requires opt-in via a crate feature flag.
 - [ratatui v0.29 highlights](https://ratatui.rs/highlights/v029/)
 - [ratatui on crates.io](https://crates.io/crates/ratatui) — v0.30.0 available
 - [seccompiler on crates.io](https://crates.io/crates/seccompiler) — v0.5.0
-- [How to Run Rust Binaries Without Root Using Sandboxing](https://oneuptime.com/blog/post/2026-01-07-rust-sandboxing-seccomp-landlock/view)
-- ratatui Context7 docs (`/ratatui/ratatui`) — StatefulWidget / VirtualList patterns
-- rmcp Context7 docs (`/websites/rs_rmcp_rmcp`) — MCP SDK patterns
 
 ---
 
-*Research date: 2026-05-04*
+*Research date: 2026-05-04 (original); 2026-05-13 (refactoring toolchain addendum)*

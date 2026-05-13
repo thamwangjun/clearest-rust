@@ -1,313 +1,283 @@
 # Domain Pitfalls
 
-**Domain:** Rust rewrite of Claude Code CLI (claurst) — feature parity, upstream sync, TUI, security, async I/O
-**Researched:** 2026-05-04
-**Confidence:** HIGH (codebase-verified for Rust/security pitfalls; MEDIUM for upstream sync patterns)
+**Domain:** Rust rewrite of Claude Code CLI (claurst) — v1.1 Codebase Refactoring Milestone
+**Researched:** 2026-05-13
+**Confidence:** HIGH (codebase-verified for Rust-specific pitfalls; MEDIUM for AI-code-specific patterns)
+
+---
+
+> **Note:** This file replaces the v1.0 pitfalls file which covered security and feature parity. The v1.1 milestone is a structured refactoring of the AI-generated codebase. The pitfalls here are specific to that context: extracting methods from ownership-tangled code, removing clone/Arc<Mutex<>> spam, replacing dyn where generics suffice, eliminating unwrap(), and avoiding introducing new smells while fixing old ones. The original security pitfalls from v1.0 remain tracked in `.planning/milestones/v1.0-phases/`.
 
 ---
 
 ## Critical Pitfalls
 
-Mistakes that cause rewrites, security incidents, or data loss.
+Mistakes that cause test suite invalidation, crate interface breakage, or silent behavioral regressions.
 
 ---
 
-### Pitfall 1: MCP Project-Level Config Enables Arbitrary Command Execution
+### Pitfall 1: Method Extraction Breaks the Borrow Checker Across Function Boundaries
 
-**What goes wrong:** A malicious or compromised project-level `.claurst/mcp.json` (or equivalent) can inject an MCP server entry that executes arbitrary OS commands under the user's account. Because MCP's STDIO transport executes any command it receives with no sanitisation boundary, the project config is a direct code execution vector (issue #123). This is the claurst analogue of CVE-2025-53109/53110 and the 200,000-server STDIO vulnerability class disclosed in 2025.
+**What goes wrong:** Extracting a block of code into a new method causes the borrow checker to analyze only the method *signature*, not its implementation. Information about which specific fields are borrowed is lost at the function boundary. Code that compiled inline because the compiler could see field-level split borrows now fails because the extracted method signature forces a whole-struct borrow.
 
-**Why it happens:** MCP STDIO transport intentionally launches sub-processes. The distinction between "trusted global config" and "untrusted project config" is not enforced at the transport layer, so project-level entries run with the same privilege as user-level ones.
+For example: if `fn get_children(&self) -> &Vec<Child>` exists on a struct, calling it borrows the entire `self` — even if the method only touches `self.children`. Any simultaneous mutable borrow of `self.other_field` in the same scope now fails, even though the underlying access patterns are non-conflicting.
 
-**Consequences:** Any repository a user opens can silently execute code — supply-chain attack surface.
+**Why it happens:** Rust's borrow checker operates on signatures at call sites, not on bodies. The "split borrow" optimization is scope-local; it does not cross function call boundaries. AI-generated code is especially prone to this because LLMs frequently produce large monolithic functions (because context fits in one generation window), then later produce accessor methods that fight the very split borrows the monolithic functions relied on.
 
-**Prevention:**
-- Distinguish global MCP config (trusted, runs silently) from project-level MCP config (untrusted, requires explicit allow-listing per server).
-- On first encounter of a project-level MCP server, display a confirmation dialog listing the command to be launched and require user approval before spawning.
-- Store approved project MCP entries in `~/.claurst/mcp_approved.json` keyed by `(project_path, server_name, command_hash)` so approval is not re-asked on every start.
-- Never auto-approve on `--yes` / non-interactive flags for MCP server launches from project config.
+**Warning signs:**
+- Refactoring a large function into helper methods produces `cannot borrow \`self\` as mutable because it is also borrowed as immutable` errors that did not exist before
+- The original monolithic function accessed multiple fields of a struct in non-overlapping ways
+- Getter/setter methods were added to "clean up" direct field access
 
-**Detection:** Issue #123 is the open tracker. Warning sign: any code path that reads `<project>/.claurst/*.json` and passes `command` fields directly to `Command::new` without an intermediate approval gate.
+**Prevention strategy:**
+- Before extracting a method, map all field accesses in the target block. If multiple fields are accessed in the same scope, direct field access (possibly with `pub(crate)` visibility) is safer than getters
+- When a method must return a reference to a field, document that it forces a whole-struct borrow; callers must drop the result before any mutable borrow
+- Prefer extracting pure functions (taking owned or copied values) over methods taking `&self` when the extracted logic does not need struct context
+- Use the pattern: extract the data you need into owned/copied locals *first*, then call the new method with those locals — instead of passing `&self` to the extracted method
 
-**Phase:** Security hardening — highest priority, should be in the first phase.
-
----
-
-### Pitfall 2: Path Containment Bypass via `starts_with` Without Canonical Trailing Separator
-
-**What goes wrong:** `ToolContext::path_is_within_workspace` uses `resolved.starts_with(root)` after canonicalization. In Rust, `Path::starts_with` on `PathBuf` is component-aware (it checks full path components, not byte prefixes), which is correct. However, if `canonicalize` fails (file does not exist yet), the fallback is `path.to_path_buf()` — an unresolved, non-canonical path — which could be manipulated by symlinks or `..` components.
-
-**Why it happens:** `canonicalize` returns `Err` for paths that do not yet exist (e.g., before a file is created). The `unwrap_or_else(|_| path.to_path_buf())` fallback silently degrades to unchecked path comparison. A tool creating a new file outside the workspace would pass the check on the non-canonical pre-creation path.
-
-**Consequences:** File write/create operations can escape the workspace sandbox — permission bypass analogous to CVE-2025-53110 (directory containment bypass in Anthropic's own MCP server).
-
-**Prevention:**
-- For path permission checks on files that may not exist yet, canonicalize the *parent directory* (which must exist) and append the filename component after.
-- Reject paths containing `..` components before canonicalization.
-- Add a unit test: `path_is_within_workspace("/workspace/../etc/passwd")` must return false even when `/workspace` exists.
-
-**Detection:** Issues #79 and #96 (permission bypass). Look for `unwrap_or_else(|_| path.to_path_buf())` at permission check callsites.
-
-**Phase:** Security hardening — address alongside #123.
+**Phase mapping:** Bloater elimination (extract long methods) — every extraction in a struct with complex borrow patterns requires pre-analysis.
 
 ---
 
-### Pitfall 3: Credentials File Written World-Readable
+### Pitfall 2: Removing clone() Exposes Hidden Lifetime Complexity — Replacement May Be Worse
 
-**What goes wrong:** `auth_store.rs` writes `~/.claurst/auth.json` with `std::fs::write(path, json)` which inherits the process umask. A typical umask of 022 makes the file readable by all users on the system. API keys and OAuth tokens (including refresh tokens) are exposed to any co-tenant process.
+**What goes wrong:** AI code uses `.clone()` to resolve every borrow checker conflict. Removing a clone seems like a simple improvement, but it forces the compiler to track the original reference's lifetime through all callers — often requiring lifetime annotations to be added to multiple function signatures, struct fields, and trait implementations. The "fix" cascades across the codebase and takes far longer than expected.
 
-**Why it happens:** Rust's `std::fs::write` does not accept a mode argument. A follow-up `set_permissions` call is required but was never added.
+In a 12-crate workspace, a lifetime annotation added to a struct in `crates/core` may propagate to `crates/query`, `crates/tui`, and `crates/commands`. What looks like a 5-minute change becomes a multi-crate refactor.
 
-**Consequences:** Credential theft on multi-user or shared systems; any process running as the same user (malware, IDE plugins) reads API keys without any additional privilege.
+**Why it happens:** `.clone()` is a lifetime eraser — it terminates the borrow chain and starts fresh. When you remove it, you have to thread the actual lifetime through every site that previously relied on the clone to reset it. In AI-generated code, clones are often inserted specifically because the LLM could not solve the lifetime problem during generation; removing them re-surfaces the original problem.
 
-**Prevention:**
-```rust
-use std::os::unix::fs::PermissionsExt;
-std::fs::write(&path, &json)?;
-std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-```
-On Windows, use `fs::write` then ACL restriction via the `windows-permissions` crate.
+**Warning signs:**
+- A `.clone()` call is on a non-trivial type (String, Vec<T>, HashMap) inside a hot path (query loop, streaming handler, TUI render tick)
+- The value being cloned is used in a function that returns a reference
+- Removing the clone produces lifetime errors in callers you did not touch
 
-**Detection:** `crates/core/src/auth_store.rs:52-60`. Confirmed by CONCERNS.md audit. Fix is one-line.
+**Prevention strategy:**
+- Start with profiling-informed clone removal: use `cargo flamegraph` or `criterion` benchmarks to identify clones that are actually performance problems, not just style issues
+- For clones that are "lifetime erasers," consider whether the real fix is restructuring ownership (e.g., storing the owned value in the struct rather than borrowing it) vs. simply propagating a reference
+- Do clone removals one at a time. Batch removal is the fastest path to a broken build with unclear root causes
+- The rule: if removing a clone requires adding lifetime parameters to more than 2 function signatures in different modules, reconsider whether the clone should stay or whether the struct design needs to change first
 
-**Phase:** Security hardening — lowest effort, highest impact.
-
----
-
-### Pitfall 4: Plugin Hooks Use `sh -c` with Unsanitized Hook Commands
-
-**What goes wrong:** `crates/plugins/src/hooks.rs:166,300` spawns `sh -c <hook_command>`. If any part of `hook_command` is assembled from runtime user input or mutable plugin metadata (rather than the static, at-install-time plugin manifest), this is a shell injection vector.
-
-**Why it happens:** Shell invocation is the easiest way to run arbitrary commands with pipes and redirects. The injection surface is non-obvious because the manifest is "trusted" — but plugin manifests can be updated, and future features (user-editable hooks) could introduce injection paths.
-
-**Consequences:** Privilege escalation from plugin hook to arbitrary shell command execution.
-
-**Prevention:**
-- Document and assert in code that `hook_command` must come exclusively from the static, install-time plugin manifest — never from runtime user input.
-- Where possible, parse the hook command into `argv` and use `Command::new(argv[0]).args(&argv[1..])` to spawn without a shell.
-- Add a lint/audit comment at each `sh -c` callsite identifying the trust boundary.
-
-**Detection:** `crates/plugins/src/hooks.rs`. Warning sign: any refactor that passes session state, user input, or tool results into hook command construction.
-
-**Phase:** Security hardening. Low urgency until plugin hooks become user-editable; document the trust boundary now.
+**Phase mapping:** Dispensable cleanup (remove clone spam) — every clone removal is a candidate for this cascade; treat as high-effort by default.
 
 ---
 
-### Pitfall 5: Mouse Capture Unconditionally Breaks Native Text Selection
+### Pitfall 3: Replacing Arc<Mutex<T>> Deadlocks Tokio Under async
 
-**What goes wrong:** `setup_terminal()` unconditionally calls `EnableMouseCapture`. When mouse capture is active, the terminal emulator routes all mouse events to the application rather than the OS. This prevents native text selection with click-and-drag in every terminal emulator that respects X11 mouse reporting (xterm, iTerm2, Alacritty, Kitty, etc.). Users cannot copy output without holding Shift (terminal-specific workaround). This is issue #104.
+**What goes wrong:** AI-generated Rust code that was ported from TypeScript/JavaScript commonly wraps shared state in `Arc<Mutex<T>>` or `Arc<RwLock<T>>`. The refactoring instinct is to replace this with owned state passed through function parameters. However, the refactoring may introduce a subtler problem: `std::sync::Mutex` held across an `.await` point.
 
-**Why it happens:** Mouse capture is all-or-nothing in crossterm's current API. There is no built-in crossterm mechanism for "capture clicks but not drags" or "let shift-click pass through."
+If `std::sync::Mutex` (not `tokio::sync::Mutex`) is still used after refactoring, and a lock guard is held across an `.await` point, the Tokio executor can schedule another task on the same thread that then tries to acquire the same lock — causing a deadlock. Some `MutexGuard` implementations are `Send`, meaning this compiles without error but deadlocks at runtime.
 
-**Consequences:** Users lose native copy-paste. Long conversation outputs cannot be selected and copied with the mouse, degrading daily usability.
+**Why it happens:** Refactoring moves code around without tracking which mutexes are `std::sync` vs `tokio::sync`. The deadlock is runtime-only and non-deterministic — it may not appear in tests but manifests under load.
 
-**Prevention:**
-- Make mouse capture opt-in via a `settings.json` key (`mouse_capture: bool`, default `false` or `true` with a migration prompt).
-- Warn users in the UI that enabling mouse capture disables native text selection; provide the terminal-specific workaround (Shift+click/drag).
-- For scroll handling specifically: implement scroll via keyboard events and `MouseScrollDown`/`MouseScrollUp` only; these can be captured without capturing drag events on some terminals.
-- On Windows, test with crossterm's `EnableMouseCapture` separately — behavior differs from POSIX terminals.
+**Warning signs:**
+- `std::sync::Mutex` or `std::sync::RwLock` lock guard is stored in a `let` binding above an `.await` expression in the same scope
+- Tests pass but the application deadlocks intermittently in integration scenarios
+- A refactor moved async code into a closure or helper function that now holds a guard across an await boundary it did not before
 
-**Detection:** `crates/tui/src/lib.rs:192` — `EnableMouseCapture` in `setup_terminal()`. Warning sign: any PR that adds mouse drag handling without making capture configurable.
+**Prevention strategy:**
+- Audit every `std::sync::Mutex` (and `std::sync::RwLock`) in the codebase. For each: does any code path hold a guard across `.await`? If yes, migrate to `tokio::sync::Mutex` or restructure to drop the guard before the await
+- The claurst workspace already uses `parking_lot::Mutex` in several places (noted in CONCERNS.md). `parking_lot::Mutex` is sync-only; same rules apply
+- The safest pattern for shared state in Tokio: wrap `Arc<Mutex<T>>` in a newtype struct with synchronous methods only. Never expose the guard outside those methods. This guarantees no guard crosses an `.await`
+- For state that only needs ownership transfer (not sharing), use message-passing via `tokio::sync::mpsc` or `tokio::sync::oneshot` instead of shared mutexes entirely
 
-**Phase:** TUI polish phase. Prerequisite: settings schema must support the `mouse_capture` key.
+**Phase mapping:** Coupler fixes (removing excessive shared state), Bloater elimination (simplifying long parameter lists that hide Arc<Mutex<T>> passing) — async correctness audit required before and after.
 
 ---
 
-### Pitfall 6: `std::env::set_var` in Async Multi-Threaded Tests
+### Pitfall 4: Replacing dyn Trait with Generics Causes Monomorphization Code Explosion and Compile Time Regression
 
-**What goes wrong:** 15+ callsites in test code mutate process-global environment variables (`ANTHROPIC_API_KEY`, `HOME`, voice kill-switch vars) using `std::env::set_var`/`remove_var` inside `#[tokio::test]` harnesses. Tokio runs tests on a multi-threaded executor. Concurrent env var mutation is undefined behaviour in Rust 1.81+ (and documented UB in POSIX — `getenv`/`setenv` are not thread-safe).
+**What goes wrong:** AI code frequently uses `Box<dyn Trait>` where static dispatch with generics would suffice — because LLMs are trained on examples that mix the two patterns. Replacing `dyn Trait` with `impl Trait` or `<T: Trait>` generics is the idiomatic fix. However, in a 12-crate workspace with `LlmProvider` trait used across `api`, `query`, `tui`, `commands`, `bridge`, and `acp` crates, converting the central trait to a generic parameter causes monomorphization: the compiler generates separate code for each concrete provider type. This can multiply compile times and binary size significantly.
 
-**Why it happens:** Env vars are the simplest way to inject test configuration without passing it through constructors. The pattern was common before Tokio's multi-threaded test executor made the UB practical.
+The real cost appears at link time and in incremental build times — breaking the inner dev loop for contributors.
 
-**Consequences:** Intermittent test failures (flaky CI), silently wrong test results when two tests race on the same env var, potential process-level memory corruption in POSIX builds.
+**Why it happens:** Monomorphization is zero-cost at runtime but not at compile time. In a workspace where the trait is used at many call sites across many crates, each new concrete type multiplies the code generated. The claurst `LlmProvider` trait, for example, is likely used in query loop hot paths — a good candidate for `dyn` (heterogeneous, runtime-selected provider) rather than generics (homogeneous, compile-time-selected).
 
-**Prevention:**
-- Short-term: Annotate affected tests with `#[serial_test::serial]` to force sequential execution within the env-mutating group.
-- Medium-term: Replace env var injection with explicit `Config` or `Arc<Mutex<Config>>` passing through constructors. Remove all `std::env::set_var` calls from non-test code paths.
-- Never use `std::env::set_var` inside `#[tokio::test]` without `#[serial]`.
+**Warning signs:**
+- A trait has only 2-5 concrete implementations but is used at dozens of call sites across many crates
+- The concrete type implementing the trait is selected at runtime (from config/CLI args), not at compile time
+- After replacing `dyn` with generics, `cargo build` time increases by more than 20%
 
-**Detection:** `crates/core/src/lib.rs:3821-3858`, `crates/core/src/import_config.rs:887-901`, `crates/core/src/voice.rs:618-652`, `crates/mcp/src/lib.rs:1416-1439`. Confirmed by CONCERNS.md.
+**Prevention strategy:**
+- Apply the decision rule: use `dyn Trait` when the concrete type is chosen at runtime (config-driven, user-selected); use generics when the concrete type is fixed at compile time or when you need multiple trait bounds on the same type
+- For `LlmProvider` specifically: keep `dyn LlmProvider` — provider selection is always runtime-based (config, env vars, CLI flag). This is a correct use of dynamic dispatch
+- Audit uses of `Box<dyn Trait>` where the trait has only one concrete implementation and the type is always known at compile time — these are legitimate targets for conversion
+- After any `dyn`→generic conversion, run `cargo build --timings` to measure compile time impact before committing
 
-**Phase:** Technical debt cleanup. Should be fixed before CI is expanded; currently masks real failures.
+**Phase mapping:** Dispensable cleanup (removing speculative over-abstraction) — but this pitfall runs in the opposite direction. Not all `dyn` usage is wrong; some is appropriate.
+
+---
+
+### Pitfall 5: Replacing unwrap() Surfaces Hidden Invariant Assumptions — Fixing the Wrong Layer
+
+**What goes wrong:** ~410 `.unwrap()` calls exist in the production codebase (noted in CONCERNS.md). The naive replacement is: change every `.unwrap()` to `?` or `.expect("reason")`. But `.unwrap()` in AI code often masks an architectural assumption: the code assumes a value is always `Some` or `Ok` because of invariants maintained elsewhere. Replacing with `?` propagates an error that should be impossible — creating error paths that will never trigger and obscuring what the actual invariant was.
+
+Worse: some `unwrap()` calls are on `Option` types in data structures that should be redesigned to not be optional at all. Replacing `.unwrap()` with `?` in those cases papers over the real fix (making the type `T` instead of `Option<T>`) and adds noise to error handling paths.
+
+**Why it happens:** LLMs generate `Option<T>` and `Result<T>` fields defensively because it is "safe" code. Then they call `.unwrap()` everywhere because the defensive wrapping was unnecessary. The correct fix is two-layered: first determine if the wrapper type was needed, then remove unwrap.
+
+**Warning signs:**
+- `.unwrap()` is called on a field that is always set during construction and never unset (`Option<T>` field that is always `Some` after `new()`)
+- `.unwrap()` is called immediately after an insertion (`map.insert(k, v); map.get(&k).unwrap()`)
+- A batch of `unwrap()` → `?` replacements introduces new `Result` return types on functions that previously returned `()` or a plain type — requiring callsites to be updated
+
+**Prevention strategy:**
+- Before replacing an `.unwrap()`, determine *why* it exists: (a) genuine error handling deferred by the author, (b) invariant the author believed always holds, (c) `Option<T>` field that should be `T`
+- For case (a): replace with `?` and add an appropriate error type
+- For case (b): replace with `.expect("invariant: X because Y")` — this preserves the invariant documentation and makes panics informative rather than silent
+- For case (c): redesign the type (remove `Option`), which is the correct fix but requires understanding all construction paths
+- Never batch-replace all `unwrap()` with `?` in a single commit. Each replacement requires a reasoning step
+
+**Phase mapping:** Bloater elimination and Dispensable cleanup — categorize each unwrap before replacing; do not use sed/find-replace for this class of change.
+
+---
+
+### Pitfall 6: Characterization Tests Written at the Wrong Granularity
+
+**What goes wrong:** Characterization tests written before refactoring are the behavior anchor. If tests are written at too coarse a granularity (CLI snapshot only, end-to-end only), they will fail to catch internal regressions that do not affect the final CLI output but break intermediate state. If written at too fine a granularity (every private function), they couple the test suite to implementation details and every refactor breaks 50 tests.
+
+**Why it happens:** Writing characterization tests for an AI-generated codebase is particularly tricky because AI code has many private helper functions that implement non-obvious behavior. It is tempting to test every helper directly. But if you do, renaming a function or changing its signature during refactoring invalidates those tests — defeating their purpose.
+
+**Warning signs:**
+- Characterization test suite has more than 50% test coverage on private functions (use `#[cfg(test)]` `pub` to expose them)
+- Moving a function from one module to another during refactoring breaks tests that are not testing the behavior being changed
+- End-to-end tests pass but unit tests fail — indicating the tests are testing internals rather than behavior
+
+**Prevention strategy:**
+- Write characterization tests at the public interface of each crate (pub functions, trait implementations). These are the interfaces that matter for correctness; refactoring internal details should not break them
+- For complex internal logic that is hard to test through the public interface, write tests against the behavior as exercised through the public API — not by making private functions public just to test them
+- Snapshot tests (using `insta` or similar) for CLI output and TUI render output are appropriate characterization tests; they capture "what the system does" without coupling to how
+- Use `cargo test --doc` to ensure all doc-test examples are part of the characterization suite
+
+**Phase mapping:** Characterization test phase (prerequisite to all refactoring) — this is the first phase and determines whether the subsequent refactoring can proceed safely.
 
 ---
 
 ## Moderate Pitfalls
 
-Mistakes that cause regressions, degraded UX, or accumulating technical debt.
+Mistakes that cause regressions, contributor friction, or refactoring-induced smells.
 
 ---
 
-### Pitfall 7: TypeScript → Rust Translation Produces Deceptive Async Equivalences
+### Pitfall 7: Crate Interface Breakage Silently Compiles if Consumers Are in the Same Workspace
 
-**What goes wrong:** TypeScript `Promise.all([a(), b()])` is an eager, concurrent execution. The Rust equivalent looks like `tokio::join!(a(), b())` — but only if the futures are spawned correctly. A naive port of `async function foo() { await bar(); await baz(); }` becomes sequential `foo().await; bar().await; baz().await;` — concurrent in TS, sequential in Rust.
+**What goes wrong:** In a Cargo workspace, all crates are compiled together. Removing a `pub` function from `crates/core` that is used in `crates/tui` will fail to compile — which is correct. However, removing a `pub` function that is *not currently used* in the workspace will compile successfully, even if it is part of the intended public API for future external consumers or upstream contributors.
 
-Similarly, TypeScript callbacks fire asynchronously (microtask queue). Rust `async fn` futures are lazy — they do not execute until polled. Fire-and-forget patterns from TS (`somePromise()` without `await`) must become `tokio::spawn(some_future())` in Rust, or the work never runs.
+In the claurst context, contributors depend on the stable crate interfaces. A refactoring that removes a `pub` symbol they use will break their forks without any local compilation warning.
 
-**Why it happens:** The syntax looks similar (`await` in both), but the execution model is inverted. JS futures are eager; Rust futures are lazy.
+**Why it happens:** Rust's visibility rules check compilation, not API contracts. `cargo build` does not warn you that you removed a previously-exported function — it only fails if a current workspace consumer uses it.
 
-**Consequences:** Features that worked concurrently in Claude Code TypeScript silently become sequential in claurst, degrading streaming performance and causing apparent hangs.
+**Prevention strategy:**
+- Use `cargo-semver-checks` before any PR that touches `pub` API surface: `cargo install cargo-semver-checks && cargo semver-checks check-release`
+- Document which crate APIs are considered stable (used by forks/upstreams) vs internal-only. Use `#[doc(hidden)]` for technically-pub but not-API-contract symbols
+- When removing `pub` functions during refactoring, add a one-release deprecation cycle via `#[deprecated(since = "1.1.0", note = "use X instead")]` for any function that appears in the spec or contributor documentation
+- Review `pub(crate)` vs `pub` — over-use of bare `pub` in AI code is common (the LLM defaults to making things public to avoid compilation errors during generation). Downgrading to `pub(crate)` where appropriate reduces the stable API surface
 
-**Prevention:**
-- During feature parity work, audit every translated async function for concurrency intent.
-- Use `tokio::join!` for "run these concurrently and wait for all", `tokio::spawn` for fire-and-forget background tasks.
-- Add latency regression tests for streaming tool dispatch that would catch serialised-where-parallel regressions.
-
-**Detection:** Warning sign: streaming responses feel slower in claurst than in Claude Code for equivalent operations. Look for sequential `.await` chains in tool dispatch and query loop code.
-
-**Phase:** Feature parity phases. Verify during each tool/command translation.
+**Phase mapping:** All refactoring phases — run `cargo-semver-checks` as a gate on every phase that modifies public function signatures.
 
 ---
 
-### Pitfall 8: `tokio::select!` Cancels In-Flight Work Non-Deterministically
+### Pitfall 8: Shotgun Surgery During Module Splits — Imports Cascade Across All 12 Crates
 
-**What goes wrong:** `tokio::select!` drops all non-winning futures at their current `.await` point. Any state accumulated in those futures (partial writes, acquired locks, partially-sent messages) is discarded. In a TUI event loop, a pattern like:
+**What goes wrong:** Splitting a monolithic file (e.g., `crates/commands/src/lib.rs` at 8,576 lines) into per-module files requires updating every `use` statement that previously imported from `commands::*`. In a 12-crate workspace where commands are used in `tui`, `core`, `cli`, and `mcp`, the import cascade touches dozens of files.
 
-```rust
-loop {
-    select! {
-        event = terminal_events.recv() => { handle_event(event); }
-        msg = query_result.recv() => { update_ui(msg); }
-    }
-}
-```
+The risk is not just mechanical churn — it is that during the import cascade, some `use` statements are updated incorrectly (wrong module path), and the error only surfaces at a call site far from the renamed item.
 
-...will silently drop `update_ui(msg)` processing if a terminal event arrives simultaneously, or drop a buffered terminal event if a query result races it.
+**Why it happens:** Rust import paths are absolute within a crate (`crate::commands::some_fn`) and relative within a module (`super::some_fn`). When moving items between modules, both path types need updating. AI-generated code often mixes these styles unpredictably.
 
-**Why it happens:** `select!` is the idiomatic Rust tool for racing futures, but its cancellation semantics require every branch future to be "cancellation-safe." Many async channel `recv()` calls are cancellation-safe, but custom futures, partially-written buffers, or futures holding locks are not.
+**Warning signs:**
+- `lib.rs` has more than 2,000 lines and is the only file in its crate's `src/`
+- `grep -r "use crate::" crates/ | wc -l` returns a large number — indicates many direct path imports that will all need updating
+- The file being split is imported with `*` (glob import) anywhere in the workspace
 
-**Consequences:** Lost UI updates, dropped streamed tokens, silent message loss from the query loop, or deadlocks from cancelled lock holders.
+**Prevention strategy:**
+- Before splitting a large file, run `cargo test` and record the test count as a baseline
+- Split in small increments: move one logical group at a time (one command, one widget) rather than attempting a complete reorganization in one commit
+- Use `pub use` re-exports in the original location to maintain backward compatibility during the split: `pub use self::new_module::SomeType;` in `lib.rs` until all callers are updated
+- After each sub-split, run the full test suite before proceeding to the next
 
-**Prevention:**
-- Prefer separate Tokio tasks communicating via channels over large `select!` blocks.
-- When `select!` is used, ensure all branch futures are cancellation-safe (check the Tokio docs per future type).
-- Re-use the same future instance across loop iterations (via `pin_mut!` or `Box::pin`) for futures with internal state (e.g., `tokio::time::sleep`).
-
-**Detection:** Warning sign: intermittent dropped streaming tokens or missed key events under load. Review every `select!` in `crates/tui/src/app.rs` for non-cancellation-safe branches.
-
-**Phase:** Any phase touching the TUI event loop or query loop. Introduce a design review checklist for new `select!` usage.
+**Phase mapping:** Coupler and Change Preventer fixes (splitting monolithic files) — the most mechanically risky category of refactoring in this codebase.
 
 ---
 
-### Pitfall 9: Upstream Sync Merge Conflicts Concentrate in Monolithic Files
+### Pitfall 9: Fixing Feature Envy by Moving Code Changes Trait Implementations
 
-**What goes wrong:** Three of claurst's largest files — `crates/commands/src/lib.rs` (8,576 lines), `crates/tui/src/app.rs` (5,918 lines), `crates/core/src/lib.rs` (4,246 lines) — are primary targets for both upstream feature additions and claurst-local feature work. When the upstream kuberwastaken/claurst adds a command or TUI widget to these same files, every merge creates conflicts across thousands of lines.
+**What goes wrong:** "Feature Envy" — a function in module A that uses mostly data from module B — is a legitimate code smell. The fix is to move it to module B. But in Rust, moving a method to a different module may require moving it to a different `impl` block, which may require implementing a trait on a type from another crate, which Rust prohibits (the orphan rule).
 
-**Why it happens:** Monolithic files accumulate conflicts proportional to their size. With no module boundary, any upstream change to command handling collides with any claurst-local command change.
+In claurst, this is likely to occur with `LlmProvider` trait implementations: if a method in `crates/query` exhibits Feature Envy by primarily operating on types from `crates/api`, moving it to `crates/api` may require adding a method to a trait that is defined in a third crate — violating the orphan rule.
 
-**Consequences:** Upstream sync takes hours instead of minutes; merge errors introduce subtle bugs; contributors avoid syncing, accelerating divergence.
+**Why it happens:** The orphan rule (`impl Trait for Type` requires either `Trait` or `Type` to be local to the crate) prevents a large class of "just move this method" refactors from compiling. AI code ignores this constraint during generation.
 
-**Prevention:**
-- Split `commands/src/lib.rs` into per-command files before the next major upstream sync.
-- Split `tui/src/app.rs` into widget-specific modules.
-- Use `git diff upstream/main...HEAD -- crates/commands/src/lib.rs` before every sync to quantify the conflict surface.
-- Maintain a `CHANGELOG-local.md` of claurst-specific changes so they can be quickly re-applied after a disruptive upstream sync.
+**Warning signs:**
+- The method you want to move uses a type from a different crate as its primary receiver
+- The target location for the method would require `impl ForeignTrait for ForeignType`
+- Moving the method requires adding a new trait method, which would be a breaking API change
 
-**Detection:** Warning sign: a `git merge upstream/main` produces more than 50 conflict markers in a single file. At 8,576 lines, `lib.rs` hits this threshold on any non-trivial upstream commit.
+**Prevention strategy:**
+- When Feature Envy crosses crate boundaries, the fix is usually a new wrapper type (newtype pattern) or a new free function, not a method move
+- Alternatively, introduce an extension trait: `trait LlmProviderExt: LlmProvider { fn envious_method(&self) { ... } }` in the crate where the method logically belongs
+- Document the crate boundary in the code: `// Note: logic here belongs conceptually to crates/api but cannot be moved due to orphan rule — see ARCHITECTURE.md`
 
-**Phase:** Refactoring phase (module split) should precede the next major upstream sync.
-
----
-
-### Pitfall 10: Feature Flag Combinatorial Testing Gap
-
-**What goes wrong:** `crates/core/Cargo.toml` defines 36 feature flags. CI likely tests `dev_full` (all features on) and the default set. Features that are individually enabled but not tested in any CI combination can silently break. Historically, the `voice` feature broke (issue #88) because ALSA integration was not exercised in the CI matrix.
-
-**Why it happens:** Combinatorial feature testing is exponential. 36 features = 2^36 combinations. Teams default to testing extremes (all on / all off) and miss mid-combinations.
-
-**Consequences:** Shipped binaries with enabled features (voice, computer-use, bridge) break at runtime for users even though CI is green.
-
-**Prevention:**
-- Identify which features are actually enabled in production release builds. Test those explicitly.
-- For each non-default feature, add a CI job: `cargo test --features <feature>` in addition to `dev_full`.
-- Replace empty feature flags (no code behind them) with runtime configuration to reduce the flag count.
-
-**Detection:** Warning sign: a GitHub issue reports a broken feature that CI never tested in isolation (pattern matching issues #88, #114).
-
-**Phase:** CI/infrastructure phase. Low-hanging: add per-feature CI jobs.
+**Phase mapping:** Coupler fixes (Feature Envy, Inappropriate Intimacy) — crate boundary awareness required before any cross-crate method move.
 
 ---
 
-### Pitfall 11: `unwrap()` Panics in Production Cascade Through Tokio Tasks
+### Pitfall 10: Removing "Speculative Generality" Over-Abstractions Can Leave Callers with No Alternative
 
-**What goes wrong:** ~410 `.unwrap()` calls outside test modules. In a Tokio multi-threaded runtime, a panic in a spawned task does not kill the process — the task is silently dropped. However, panics on the main thread or in `tokio::spawn` tasks holding `std::sync::Mutex` locks poison those locks. Subsequent lock acquisitions will fail with `PoisonError`, and callers that call `.unwrap()` on the lock result will then also panic — creating a cascade.
+**What goes wrong:** AI code frequently generates "speculative generality" — unused generic parameters, traits with one implementation, and abstract factory patterns for things that will only ever have one concrete form. The refactoring instinct is correct: remove them. But some of these abstractions are used in test doubles or mocking setups that are not immediately obvious from a codebase grep.
 
-**Why it happens:** Rust's `std::sync::Mutex::lock()` returns `LockResult`, which developers habitually `.unwrap()`. One task panic can poison a mutex and take down unrelated functionality.
+Removing an abstraction that is "only used once" in production code may break a test helper that the author intended to swap in a fake. After removal, the test suite cannot compile.
 
-**Consequences:** A single streaming error in one tool call can poison a mutex and crash the entire TUI render loop, requiring the user to restart.
+**Why it happens:** Test mocks and fakes are consumers of abstraction. If the characterization test suite is written *after* the speculative abstractions are removed, the problem is not discovered. If tests are written *before* (as intended in this milestone), the problem surfaces correctly during the test-writing phase — before any code is deleted.
 
-**Prevention:**
-- Standardize on `parking_lot::Mutex` (already a workspace dependency) — it never poisons.
-- Replace `unwrap()` on `Mutex::lock()` with `parking_lot::Mutex::lock()` (infallible).
-- Replace `panic!` in production `match` arms (`crates/tui/src/elicitation_dialog.rs:641,762`, `crates/commands/src/named_commands.rs:1178,1238`) with `Err(...)` returns.
+**Warning signs:**
+- A trait has one concrete implementation in production code but is used in `#[cfg(test)]` blocks or in a `tests/` directory with a different implementation
+- An abstract factory or builder pattern has a single `build()` variant and no variants in the codebase history
 
-**Detection:** CONCERNS.md catalogues the highest-risk sites. Warning sign: any crash report where the panic message is "Expected Ask, got ..." or "Expected Message" — these are production panics, not test panics.
+**Prevention strategy:**
+- The characterization test phase (first phase) must be completed before any dispensable cleanup. Tests will surface which abstractions are load-bearing for testing even if not for production
+- Before removing any trait, run: `grep -r "TraitName" . --include="*.rs"` including in `tests/` and `benches/` directories
+- If a trait is used only in tests, consider whether it is testing the right thing — test-only abstractions can often be replaced with direct struct construction
 
-**Phase:** Technical debt cleanup. Standardize `parking_lot::Mutex` first (mechanical change), then address `panic!` in match arms per crate.
-
----
-
-### Pitfall 12: Web Fetch OOM via Unbounded Response Buffering
-
-**What goes wrong:** `crates/tools/src/web_fetch.rs:351` calls `resp.text().await` before any size check. The 100 KB truncation is applied *after* the full response is read into memory. A malicious or unexpectedly large HTTP response (e.g., a CDN serving a multi-GB binary at a well-known URL) will exhaust heap before truncation applies.
-
-**Why it happens:** `reqwest::Response::text()` is the simplest API for getting response body as string. Size limiting requires streaming with `Response::chunk()`.
-
-**Consequences:** OOM crash of the entire claurst process; potential DoS if the AI is instructed to fetch a large URL.
-
-**Prevention:**
-```rust
-const MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB hard cap
-let mut bytes = Vec::with_capacity(65536);
-while let Some(chunk) = resp.chunk().await? {
-    bytes.extend_from_slice(&chunk);
-    if bytes.len() > MAX_BODY_BYTES {
-        break;
-    }
-}
-```
-Apply the existing 100 KB text truncation downstream.
-
-**Detection:** `crates/tools/src/web_fetch.rs:351`. Warning sign: claurst OOM-crashes while a web fetch tool is active.
-
-**Phase:** Security/stability hardening. Low implementation effort.
+**Phase mapping:** Characterization test phase gates all dispensable cleanup. Do not delete speculative abstractions before the test suite is complete.
 
 ---
 
-### Pitfall 13: OAuth State/PKCE Not Validated — CSRF Risk
+### Pitfall 11: Introducing New Primitive Obsession While Fixing the Old
 
-**What goes wrong:** `crates/cli/src/oauth_flow.rs:234` parses the callback URL but there is no confirmed assertion that the returned `state` parameter matches the originally generated state. If state validation is absent, an attacker who can redirect the browser callback (e.g., via a malicious page open at the same time) can inject a valid OAuth code with a forged state and hijack the authentication.
+**What goes wrong:** The fix for primitive obsession (strings used as identifiers, ints used as enums) is to introduce newtype wrappers or proper enums. But the refactoring itself can introduce new primitive obsession if done carelessly. For example, replacing `String` provider names with a `ProviderName(String)` newtype wrapper, and then also replacing session IDs with a `SessionId(String)` newtype — but using the same inner representation `String` for both with no conversion boundary. Now `ProviderName` and `SessionId` are different types that are still both just strings, and the codebase has twice as many conversions between them.
 
-**Why it happens:** OAuth PKCE flows in native CLI applications are more complex than web flows. State validation is easy to omit when focusing on the happy path.
+**Why it happens:** Newtype wrappers added by refactoring are often added per-type rather than per-domain concept. Multiple newtypes wrapping the same primitive with similar behavior proliferate conversion boilerplate without actually improving type safety at the boundaries that matter.
 
-**Consequences:** OAuth CSRF — attacker links their account to the victim's claurst session, gaining access to conversations.
+**Warning signs:**
+- Two or more newtype structs are defined with identical inner types and identical `From`/`Into` implementations
+- The only methods on a newtype are `new(inner: T) -> Self`, `inner(&self) -> &T`, and `Display`
+- A function accepts multiple newtype parameters of the same inner type — callers can still pass them in the wrong order without a compile error
 
-**Prevention:**
-- Verify that `returned_state == generated_state` before calling the token exchange endpoint.
-- If already implemented elsewhere, add a comment at `oauth_flow.rs:234` citing the exact validation location.
-- Add a test: callback with a mismatched state must return `Err`.
+**Prevention strategy:**
+- Before introducing a newtype, ask: does this type participate in domain logic that validates or constrains the inner value? If yes (e.g., `ModelId` must match a known model name), the newtype is worth it. If no (e.g., `SessionId` is just an opaque string), a type alias `type SessionId = String` may serve the documentation purpose without the boilerplate
+- Group related newtype definitions in a single `types.rs` module to make proliferation visible
+- After each refactoring phase, grep for `struct [A-Z][A-Za-z]+(String)` or similar patterns and count newtype wrappers as a metric
 
-**Detection:** `crates/cli/src/oauth_flow.rs`. Warning sign: no `assert_eq!(state, original_state)` or equivalent check in the callback handler.
-
-**Phase:** Security hardening. Verify or implement during the auth/credentials phase.
+**Phase mapping:** Bloater elimination (primitive obsession fix) — requires discipline to not over-apply the pattern.
 
 ---
 
-### Pitfall 14: SSRF via `WebFetch` to Internal Network Endpoints
+### Pitfall 12: "Big Bang" Multi-Crate Refactoring Stalls Due to Compile Cycle
 
-**What goes wrong:** `WebFetchTool` accepts any URL from the AI model without checking whether the target resolves to a loopback, RFC 1918, or APIPA address. A prompt-injected or adversarial model response could instruct the tool to probe `http://169.254.169.254/` (AWS IMDS), `http://localhost:6379/` (Redis), or any other internal service.
+**What goes wrong:** If refactoring changes are batched across multiple crates in one PR (e.g., renaming a type in `crates/core` and updating all 11 consumers simultaneously), the PR becomes a 2,000-line diff that is difficult to review, impossible to bisect when something breaks, and prone to merge conflicts if other work is in flight.
 
-**Why it happens:** SSRF protection requires resolving the hostname before connecting and checking the resulting IP against blocklists — a non-obvious step not in `reqwest`'s default API.
+More critically: if the PR fails CI (a test breaks), rolling back requires reverting all 12 crates simultaneously — or carefully cherry-picking revert commits. In a codebase where contributors are actively working, a stalled multi-crate PR blocks the entire team.
 
-**Consequences:** Exfiltration of cloud instance metadata (IAM credentials), probing internal services, potential lateral movement.
+**Why it happens:** Type renames and interface changes *appear* to require atomic multi-crate updates because all crates must compile. This pressure pushes toward large PRs.
 
-**Prevention:**
-- Resolve the hostname via DNS before passing to `reqwest`.
-- Reject resolved IPs in: loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`, `fe80::/10`), RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), APIPA.
-- Use the `ipnet` crate for CIDR matching.
+**Prevention strategy:**
+- Use the "bridge" pattern: add the new interface alongside the old, update consumers one crate per PR, then remove the old interface in a final cleanup PR. This keeps each PR small and the codebase always compilable
+- For renames specifically: use `#[deprecated]` + `pub use` re-exports to allow the rename to be incremental: (1) add new name, (2) deprecate old name, (3) update consumers, (4) remove old name
+- Set a PR size budget: no more than 3 crates changed in a single PR, no more than 500 lines diff for structural changes
+- Use `cargo fix --allow-dirty` for mechanical transformations (import path updates) — it handles the boilerplate and produces reviewable, targeted diffs
 
-**Detection:** `crates/tools/src/web_fetch.rs:327`. Warning sign: no IP range validation before the `reqwest::Client::get()` call.
-
-**Phase:** Security hardening. Medium complexity; requires DNS pre-resolution.
+**Phase mapping:** All phases — establish the incremental PR discipline in the first phase so it becomes the norm.
 
 ---
 
@@ -317,51 +287,43 @@ Issues that are annoying but bounded in impact.
 
 ---
 
-### Pitfall 15: Crossterm Version Mismatch Creates Silent Event Loss
+### Pitfall 13: Cargo Feature Flag Interactions Break After Refactoring
 
-**What goes wrong:** If a dependency upgrades `crossterm` to a major version different from the one ratatui uses, both versions coexist in the binary. Raw mode is tracked separately per version, so `disable_raw_mode()` from one version does not disable the mode set by the other. On exit, raw mode may not be fully restored, leaving the terminal corrupted.
+**What goes wrong:** The claurst workspace has 36 feature flags. When a module is split or a type is moved to a different crate, the feature flag that conditionally compiled the original code may not be applied to the new location. The refactored code compiles in `dev_full` (all features enabled) but fails in a feature-limited build.
 
-**Prevention:** Pin crossterm version via ratatui's feature flags (`crossterm_0_28` etc.). Add `cargo deny` or `cargo tree` checks to CI that fail if two major versions of crossterm coexist.
+**Prevention strategy:**
+- After every module split or type relocation, run `cargo check --no-default-features` and `cargo check --features default` in addition to `cargo check --all-features`
+- Add a CI step that runs `cargo check` for each non-default feature in isolation: `cargo check --features voice`, `cargo check --features bridge`, etc.
 
-**Detection:** Warning sign: `cargo tree -d | grep crossterm` shows multiple versions.
+**Detection:** Warning sign: CI `dev_full` passes but a user reports a compilation error with a specific feature enabled.
 
-**Phase:** CI/dependency hygiene. Add a check once, never revisit.
-
----
-
-### Pitfall 16: Windows Key Events Fire Twice — Duplicate Action Bug
-
-**What goes wrong:** On Windows, crossterm emits `KeyEventKind::Press` and `KeyEventKind::Release` for every key. If the event handler does not filter to `KeyEventKind::Press`, every keystroke triggers the action twice.
-
-**Prevention:** Filter at the event router: `if key.kind != KeyEventKind::Press { return; }`. Verify this filter is present in `crates/tui/src/app.rs`.
-
-**Detection:** Windows users report that Enter submits twice, or Ctrl+C exits immediately without confirmation. Warning sign: missing `key.kind == KeyEventKind::Press` guard in the primary key dispatch match.
-
-**Phase:** Cross-platform compatibility. Low effort, high impact for Windows users.
+**Phase mapping:** All structural refactoring phases — add these check commands to the phase-exit gate.
 
 ---
 
-### Pitfall 17: Hardcoded Model Registry Goes Stale
+### Pitfall 14: Test Helper Duplication Grows During Refactoring
 
-**What goes wrong:** `crates/api/src/model_registry.rs` hard-codes model names, context windows, and pricing for all providers. When Anthropic or OpenAI releases a new model, users cannot access it without a code change and a new claurst release.
+**What goes wrong:** Each crate in the workspace has its own test utilities. During refactoring, characterization tests are added to each crate. Without a shared test utilities crate, each test crate implements its own fixture builders, fake providers, and assertion helpers. By the end of refactoring, the test code itself becomes a maintenance problem.
 
-**Prevention:** Add a JSON manifest fetch from a versioned hosted URL on startup, with a 24-hour cache and fallback to the bundled snapshot on failure. For immediate relief, document how users can add custom model entries via config.
+**Prevention strategy:**
+- Create a `crates/test-utils` (or `crates/testing`) crate early in the characterization test phase
+- Common fakes (`FakeLlmProvider`, `FakeSessionStore`, `MockMcpServer`) belong in `test-utils`, not repeated in each crate's `tests/` directory
+- Gate the `test-utils` crate behind `cfg(test)` at the workspace level — it should not appear in release binaries
 
-**Detection:** Warning sign: users file issues like "claude-opus-5 is not in the model list." The model registry was last audited 2026-05-04.
-
-**Phase:** Low-priority feature polish. Can be deferred until after security and parity work.
+**Phase mapping:** Characterization test phase — establish the shared test utilities crate in the first phase.
 
 ---
 
-### Pitfall 18: Cron Task Runaway Costs
+### Pitfall 15: Visibility Downgrades (pub → pub(crate)) Silently Break Fork Contributors
 
-**What goes wrong:** `crates/query/src/cron_scheduler.rs` spawns sub-agent API calls for every due cron task without failure tracking. A perpetually-failing task fires every minute, consuming API credits indefinitely.
+**What goes wrong:** AI-generated code defaults to `pub` visibility to avoid compilation errors during generation. During refactoring, making items `pub(crate)` is correct hygiene. But the claurst project has fork contributors (kuberwastaken/claurst upstream) who may be importing these items from their own code. Downgrades from `pub` to `pub(crate)` are breaking changes even if they are not breaking changes within the workspace.
 
-**Prevention:** Track consecutive failures per cron entry; exponential backoff after 3 failures; disable after 10 consecutive failures with a user-visible warning in the TUI notification area.
+**Prevention strategy:**
+- Run `cargo-semver-checks` before any visibility downgrade
+- Audit the upstream fork for any imports of the symbols being downgraded before committing
+- If a symbol was previously `pub` but is not in the documented API, add it to an internal API list and announce the visibility change in the release notes for v1.1
 
-**Detection:** Warning sign: API usage dashboard shows unexpected recurring charges at regular intervals with no active user session.
-
-**Phase:** Cron/agent features phase. Address when cron scheduler is productionized.
+**Phase mapping:** All phases — particularly Dispensable cleanup and Coupler fixes which are most likely to downgrade visibility.
 
 ---
 
@@ -369,36 +331,41 @@ Issues that are annoying but bounded in impact.
 
 | Phase Topic | Likely Pitfall | Mitigation |
 |-------------|---------------|------------|
-| Security fixes (#123, #79, #96) | Incomplete path canonicalization for pre-creation paths (Pitfall 2) | Canonicalize parent dir + append filename |
-| Security fixes | MCP project-config approval UI skipped in `--yes` mode (Pitfall 1) | Hardcode: no auto-approve for MCP server launch from project config |
-| TUI mouse / scroll fix (#104) | Removing `EnableMouseCapture` globally breaks scroll (Pitfall 5) | Make mouse capture opt-in with fallback keyboard scroll |
-| Feature parity — slash commands | Translation of concurrent TS async to sequential Rust async (Pitfall 7) | Audit every `await` chain for concurrency intent |
-| Feature parity — tools | `file_edit.rs` has zero tests; a translation bug causes data loss | Add golden-file tests before any edit logic changes |
-| Upstream sync | Merge conflict explosion in 8,576-line `lib.rs` (Pitfall 9) | Split module before next sync |
-| Upstream sync | Upstream adds voice or computer-use code behind broken feature flags (Pitfall 10) | Add per-feature CI jobs |
-| Async / query loop work | `select!` drops in-flight query results on concurrent terminal event (Pitfall 8) | Separate tasks + channels instead of large `select!` |
-| CI expansion | `std::env::set_var` in parallel Tokio tests causes intermittent failures (Pitfall 6) | Add `#[serial]` or refactor to `Config` injection |
-| Auth / OAuth work | CSRF via missing OAuth state validation (Pitfall 13) | Verify or implement state check before token exchange |
-| WebFetch improvements | Unbounded buffering before size check (Pitfall 12) | Stream with chunk loop and byte counter |
-| Plugin marketplace | `sh -c` hook execution with future user-editable hooks (Pitfall 4) | Enforce static-manifest-only trust boundary now |
+| Characterization test suite | Tests written at wrong granularity (Pitfall 6) | Target public crate interfaces, not private helpers |
+| Characterization test suite | Speculative abstractions removed before tests reveal their test use (Pitfall 10) | Never delete before test phase is complete |
+| Bloater: extract long methods | Method extraction breaks split borrows (Pitfall 1) | Map field accesses before extracting; prefer direct field access over getters |
+| Bloater: remove clone spam | Lifetime cascade across multiple crates (Pitfall 2) | Remove one clone at a time; profile first to prioritize hot-path clones |
+| Bloater: long parameter lists | Replacing Arc<Mutex<T>> parameters with owned state exposes async deadlock (Pitfall 3) | Audit guard lifetimes vs .await points before restructuring |
+| Dispensable: remove dyn overuse | Monomorphization explosion on core traits (Pitfall 4) | Keep dyn on runtime-selected traits (LlmProvider); target compile-time-fixed uses |
+| Dispensable: unwrap cleanup | Replacing unwrap() papers over invariant type design issues (Pitfall 5) | Categorize each unwrap before replacing; do not batch |
+| Dispensable: dead/dup code | Speculative abstractions may be load-bearing for test doubles (Pitfall 10) | Complete test suite first |
+| Coupler: module splits | Import cascade across 12 crates (Pitfall 8) | Use pub use re-exports during split; move one group per commit |
+| Coupler: Feature Envy across crates | Orphan rule prevents method moves (Pitfall 9) | Use extension traits or newtype wrappers instead |
+| Change Preventer: Shotgun Surgery | Multi-crate PR stalls CI and blocks team (Pitfall 12) | 3-crate / 500-line PR budget; use deprecation bridges |
+| All structural phases | Crate API breakage invisible within workspace (Pitfall 7) | Run cargo-semver-checks as phase exit gate |
+| All structural phases | Feature flag coverage gaps after code moves (Pitfall 13) | Add no-default-features and per-feature cargo check |
+| Primitive obsession fix | Newtype proliferation creates new boilerplate obsession (Pitfall 11) | Add newtypes only where domain validation or ordering safety matters |
 
 ---
 
 ## Sources
 
-- Codebase audit: `.planning/codebase/CONCERNS.md` (2026-05-04) — HIGH confidence
-- [EscapeRoute: CVE-2025-53109 & CVE-2025-53110 — Anthropic MCP Filesystem Sandbox Escape](https://cymulate.com/blog/cve-2025-53109-53110-escaperoute-anthropic/) — HIGH confidence
-- [MCP STDIO transport command execution: 200,000 servers exposed](https://venturebeat.com/security/mcp-stdio-flaw-200000-ai-agent-servers-exposed-ox-security-audit) — HIGH confidence
-- [A Timeline of MCP Security Breaches](https://authzed.com/blog/timeline-mcp-breaches) — MEDIUM confidence
-- [Ratatui FAQ — common mistakes](https://ratatui.rs/faq/) — HIGH confidence
-- [Ratatui Mouse Capture](https://ratatui.rs/concepts/backends/mouse-capture/) — HIGH confidence
-- [Tokio select! cancellation safety](https://tokio.rs/tokio/tutorial/select) — HIGH confidence
-- [Cancel safety in async Rust](https://sunshowers.io/posts/cancelling-async-rust/) — HIGH confidence
-- [Migrating from TypeScript to Rust — corrode.dev](https://corrode.dev/learn/migration-guides/typescript-to-rust/) — MEDIUM confidence
-- [Beyond Ctrl-C: Unix signal handling dark corners](https://sunshowers.io/posts/beyond-ctrl-c-signals/) — MEDIUM confidence
-- [GitHub Blog: Strategies for friendly fork management](https://github.blog/2022-05-02-friend-zone-strategies-friendly-fork-management/) — MEDIUM confidence
-- [Anthropic: making Claude Code more secure and autonomous](https://www.anthropic.com/engineering/claude-code-sandboxing) — MEDIUM confidence
+- Codebase audit: `.planning/codebase/CONCERNS.md` (2026-05-04) — HIGH confidence (410 unwrap() count, Arc<Mutex<T>> patterns, 36 feature flags)
+- [Refactoring Rust Code to Avoid Borrow Checker Conflicts — Sling Academy](https://www.slingacademy.com/article/refactoring-rust-code-to-avoid-borrow-checker-conflicts/) — MEDIUM confidence
+- [How to Avoid Fighting the Rust Borrow Checker — qouteall](https://qouteall.fun/qouteall-blog/2025/How%20to%20Avoid%20Fighting%20Rust%20Borrow%20Checker) — HIGH confidence (covers split-borrow and method extraction)
+- [Clone to Satisfy the Borrow Checker — Rust Design Patterns (unofficial)](https://rust-unofficial.github.io/patterns/anti_patterns/borrow_clone.html) — HIGH confidence
+- [Item 12: Understand the Trade-offs Between Generics and Trait Objects — Effective Rust](https://www.lurklurk.org/effective-rust/generics.html) — HIGH confidence
+- [Advanced Rust Anti-Patterns — Medium/Lado Kadzhaia](https://medium.com/@ladroid/advanced-rust-anti-patterns-36ea1bb84a02) — MEDIUM confidence
+- [How to Deadlock a Tokio Application with a Single Mutex — Turso](https://turso.tech/blog/how-to-deadlock-tokio-application-in-rust-with-just-a-single-mutex) — HIGH confidence
+- [Tokio Shared State Tutorial — tokio.rs](https://tokio.rs/tokio/tutorial/shared-state) — HIGH confidence
+- [Long-term Rust Project Maintenance — corrode.dev](https://corrode.dev/blog/long-term-rust-maintenance/) — HIGH confidence
+- [SemVer Compatibility — The Cargo Book](https://doc.rust-lang.org/cargo/reference/semver.html) — HIGH confidence
+- [cargo-semver-checks — crates.io](https://crates.io/crates/cargo-semver-checks) — HIGH confidence
+- [Item 22: Minimize Visibility — Effective Rust](https://effective-rust.com/visibility.html) — HIGH confidence
+- [Be Simple — corrode.dev](https://corrode.dev/blog/simple/) — MEDIUM confidence (generics/abstraction discipline)
+- [Step-by-Step Guide: Refactoring a Large Rust Codebase — codenotary.com](https://codenotary.com/blog/step-by-step-guide-refactoring-a-large-rust-codebase-with-aiderdev-and-custom-llms) — MEDIUM confidence
+- [Incremental vs Big-Bang Refactoring — Steemit](https://steemit.com/business/@quantuminfo/incremental-vs-big-bang-in-software) — LOW confidence (general principles, not Rust-specific)
 
 ---
 
-*Pitfalls audit: 2026-05-04*
+*Pitfalls audit: 2026-05-13 — v1.1 Codebase Refactoring Milestone*
