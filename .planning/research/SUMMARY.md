@@ -174,12 +174,14 @@ Full 15-pitfall catalog with phase mappings: `.planning/research/PITFALLS.md`
 **Delivers:** `run_query_loop` decomposed into named step functions; duplicate tool-dispatch patterns extracted; bridge test coverage established; `AGENT_RUNNER OnceCell` panic characterized with `#[should_panic]` (do NOT fix the global pattern here — separate milestone)
 **Avoids:** Pitfall 1 (split-borrow analysis before extraction), Pitfall 3 (async mutex audit for bridge shared state), Architecture Anti-Pattern 1 (do not fix `AGENT_RUNNER` global)
 **Research flag:** NEEDS RESEARCH — the async ownership patterns in `run_query_loop` are complex; recommend `/gsd-research-phase` before execution planning for this phase
+**Refactoring reference:** `.planning/phases/08-query-and-bridge-orchestration/REFACTORING-REFERENCE.md` — Message Chains, Hide Delegate, Extract Function with `run_query_loop` sequencing guide
 
 ### Phase 6: claurst-tui Decomposition (Layer 5a)
 **Rationale:** Must be stable before claurst-commands (which depends on tui). Decompose supporting modules before tackling `app.rs`.
 **Delivers:** `prompt_input.rs` (3,719 lines) split into `input_history.rs`, `completion.rs`, `input_render.rs`; `overlays.rs` (2,103 lines) split into `overlays/` tree; `dialogs.rs` (1,621 lines) split; `app.rs` split into `event_handler.rs`, `state.rs`, `render_dispatch.rs`; `App` 150-field struct decomposed into `SessionState`/`UiState`/`RuntimeState`/`InfraHandles`
 **Avoids:** Pitfall 1 (struct decomposition is prerequisite to method extraction — split borrows only work across distinct struct fields)
 **Research flag:** Standard patterns — ratatui TestBackend + insta documented
+**Refactoring reference:** `.planning/phases/09-tui-crate-decomposition/REFACTORING-REFERENCE.md` — Large Struct, Extract Module/Struct, Move Method, Feature Envy with App decomposition sequencing guide
 
 ### Phase 7: claurst-commands Decomposition (Layer 5b)
 **Rationale:** Worst god file saved last because it depends on tui (stable after Phase 6).
